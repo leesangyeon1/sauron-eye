@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createRegistry } from './registry.js';
+import { MCP_CATALOG } from './mcp-catalog.js';
 
 const readFileP = promisify(readFile);
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web/public');
@@ -15,11 +16,23 @@ const MIME = {
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 };
 
-// adapters/claude.js may not exist yet or may be broken — never let that kill live serving
-let adapterPromise = null;
+const PROVIDERS = [
+  ['claude', 'Claude Code'],
+  ['codex', 'Codex'],
+  ['gemini', 'Gemini CLI'],
+  ['cursor', 'Cursor'],
+  ['antigravity', 'Antigravity'],
+];
+
+// adapters are the quarantine zone (DESIGN.md §1): any of them may be missing or broken —
+// dynamic import + catch so a bad adapter can never kill live serving
+const adapterCache = new Map();
+function loadAdapter(name) {
+  if (!adapterCache.has(name)) adapterCache.set(name, import(`../adapters/${name}.js`).catch(() => null));
+  return adapterCache.get(name);
+}
 function adapter() {
-  adapterPromise ??= import('../adapters/claude.js').catch(() => null);
-  return adapterPromise.then((m) => m ?? { backfillSessions: async () => [], sessionName: async () => null });
+  return loadAdapter('claude').then((m) => m ?? { backfillSessions: async () => [], sessionName: async () => null });
 }
 
 function readBody(req) {
@@ -47,6 +60,21 @@ export async function startServer({ port, dbPath } = {}) {
   const sseClients = new Set();
   const nameCache = new Map(); // ponytail: caches nulls forever too; restart to pick up late names
 
+  let detectCache = null; // ponytail: fixed 60s TTL, refreshed lazily on /api/groups hits
+  async function detectProviders() {
+    if (detectCache && Date.now() - detectCache.at < 60_000) return detectCache.providers;
+    const providers = await Promise.all(PROVIDERS.map(async ([provider, label]) => {
+      let detect = { installed: false };
+      try {
+        const m = await loadAdapter(provider);
+        detect = (await m?.detect?.()) ?? { installed: false };
+      } catch { /* adapters must never throw, but belt and suspenders */ }
+      return { provider, label, detect };
+    }));
+    detectCache = { at: Date.now(), providers };
+    return providers;
+  }
+
   async function decorate(list) {
     const a = await adapter();
     await Promise.all(list.map(async (s) => {
@@ -64,6 +92,16 @@ export async function startServer({ port, dbPath } = {}) {
       const [rawPath] = req.url.split('?');
       const url = new URL(req.url, 'http://localhost');
 
+      // 127.0.0.1 binding doesn't stop browsers: cross-origin pages can fire CORS
+      // "simple" POSTs at us, and DNS rebinding fakes the Host. Loopback-only, both headers.
+      const loopback = (h) => /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(h ?? '');
+      if (req.headers.origin && !loopback(req.headers.origin.replace(/^https?:\/\//, ''))) {
+        return json(res, 403, { ok: false, error: 'forbidden origin' });
+      }
+      if (req.headers.host && !loopback(req.headers.host)) {
+        return json(res, 403, { ok: false, error: 'forbidden host' });
+      }
+
       if (req.method === 'POST' && (rawPath === '/ingest/statusline' || rawPath === '/ingest/hook')) {
         const body = await readBody(req);
         if (body === null) return json(res, 413, { ok: false, error: 'body too large' });
@@ -74,7 +112,53 @@ export async function startServer({ port, dbPath } = {}) {
         return json(res, 200, { ok: true });
       }
 
+      if (req.method === 'PUT' && rawPath === '/api/map') {
+        const body = await readBody(req);
+        if (body === null) return json(res, 413, { ok: false, error: 'body too large' });
+        let doc;
+        try { doc = JSON.parse(body); } catch { return json(res, 400, { ok: false, error: 'invalid json' }); }
+        if (!doc || !Array.isArray(doc.nodes) || !Array.isArray(doc.edges)) {
+          return json(res, 400, { ok: false, error: 'nodes/edges arrays required' });
+        }
+        // x/y are interpolated into SVG attributes client-side — must be numbers, never strings
+        for (const n of doc.nodes) {
+          const x = Number(n?.x), y = Number(n?.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return json(res, 400, { ok: false, error: 'node x/y must be finite numbers' });
+          }
+          n.x = x; n.y = y;
+        }
+        store.kvSet('map', doc); // full-document replace
+        return json(res, 200, { ok: true });
+      }
+
       if (req.method !== 'GET') return json(res, 404, { ok: false, error: 'not found' });
+
+      if (rawPath === '/api/groups') {
+        const providers = await detectProviders();
+        const groups = registry.groups({ providers });
+        for (const g of groups) await decorate(g.sessions);
+        return json(res, 200, { groups });
+      }
+
+      if (rawPath === '/api/map') {
+        return json(res, 200, store.kvGet('map') ?? { nodes: [], edges: [] });
+      }
+
+      if (rawPath === '/api/mcp/catalog') {
+        return json(res, 200, { catalog: MCP_CATALOG });
+      }
+
+      if (rawPath === '/api/map/export') {
+        const map = store.kvGet('map') ?? {};
+        const mcpServers = {};
+        for (const n of map.nodes ?? []) {
+          if (n?.type !== 'mcp') continue;
+          const entry = MCP_CATALOG.find((c) => c.id === n.meta?.catalogId);
+          if (entry) mcpServers[entry.id] = entry.config; // placeholders stay "<TOKEN>"
+        }
+        return json(res, 200, { mcpServers });
+      }
 
       if (rawPath === '/api/health') {
         return json(res, 200, { ok: true, version: VERSION, sessions: registry.sessions().length });
@@ -100,7 +184,14 @@ export async function startServer({ port, dbPath } = {}) {
 
       if (rawPath === '/api/events') {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-        const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        // backpressure: v2 activity events fire per tool call — a stalled client must not
+        // buffer the daemon into the ground. 3 failed writes → drop; EventSource reconnects.
+        let strikes = 0;
+        const send = (event, data) => {
+          if (res.writableEnded) return;
+          if (res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)) strikes = 0;
+          else if (++strikes >= 3) res.destroy();
+        };
         for (const s of registry.sessions()) send('session', s); // snapshot replay
         send('quota', registry.quota());
         const unsub = registry.subscribe(({ type, data }) => send(type, data));
@@ -137,12 +228,18 @@ export async function startServer({ port, dbPath } = {}) {
     server.listen(port, '127.0.0.1', resolve);
   });
 
-  return {
+  const handle = {
     port: server.address().port,
     close() {
       clearInterval(sweeper);
       for (const res of sseClients) res.destroy();
+      registry.flush(); // pending debounced activity saves — before the store closes
       return new Promise((resolve) => server.close(() => { store.close(); resolve(); }));
     },
   };
+  // graceful shutdown: without this, SIGTERM drops up to 2s of debounced activity
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.once(sig, () => handle.close().finally(() => process.exit(0)));
+  }
+  return handle;
 }

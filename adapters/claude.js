@@ -1,10 +1,21 @@
 // ⚠️ Only file allowed to know Claude-internal formats. Expected to break; keep isolated.
 // Every export: best effort, never throws — [] / null on any failure.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { execFile } from 'node:child_process';
 
 const claudeDir = () => process.env.SAURON_CLAUDE_DIR || join(homedir(), '.claude');
+
+export async function detect() {
+  try {
+    if (existsSync(claudeDir())) return { installed: true };
+    // async so the probe never blocks the daemon's event loop
+    return await new Promise((res) => {
+      try { execFile('which', ['claude'], { timeout: 500 }, (err) => res({ installed: !err })); } catch { res({ installed: false }); }
+    });
+  } catch { return { installed: false }; }
+}
 
 export async function backfillSessions() {
   try {

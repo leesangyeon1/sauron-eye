@@ -22,6 +22,7 @@ try {
   const cw = j.context_window;
   const body = {
     sessionId: j.session_id,
+    provider: 'claude',
     ts: Date.now(),
     model: j.model && { id: j.model.id, display_name: j.model.display_name },
     cost: j.cost && { total_cost_usd: j.cost.total_cost_usd, total_duration_ms: j.cost.total_duration_ms },

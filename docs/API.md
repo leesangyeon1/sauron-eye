@@ -100,3 +100,56 @@ export async function sessionName(sessionId) // → string | null
 - DB: `~/.sauron/sauron.db` (node:sqlite)
 - 설정: `~/.sauron/config.json` `{ port, chainStatusline }`
 - 설치 백업: `~/.sauron/backups/settings.json.<ts>`
+
+---
+
+# v2 확장 (Phase 2 — provider groups · activity · map)
+
+## Session 확장 필드
+```json
+{ "provider": "claude|codex|gemini|cursor|antigravity|unknown",
+  "activity": {
+    "openTools":  [{ "name": "Bash", "server": null, "startedAt": 0 }],
+    "recentTools":[{ "name": "mcp__github__search", "server": "github", "ms": 812, "endedAt": 0 }],
+    "skills":     [{ "name": "deep-research", "count": 2, "lastUsed": 0 }],
+    "agents":     [{ "type": "Explore", "startedAt": 0, "endedAt": null }],
+    "mcpServers": ["github", "obsidian"]
+  } }
+```
+recentTools 최근 20개 캡, openTools 는 post/stop 이벤트로 닫힘. 전부 있을 때만 채움(관대).
+
+## POST /ingest/hook 이벤트 추가
+`pre_tool_use | post_tool_use | subagent_stop`
+meta: `{ "tool_name": "...", "tool_use_id": "...", "tool_input": {…512B 캡} }`
+registry 해석 규칙:
+- tool_name `Skill` → skills 집계 (tool_input.skill ?? .name ?? .command)
+- tool_name `mcp__<server>__<tool>` → mcpServers + 툴 기록(server 분리)
+- tool_name `Task` → agents 시작 (tool_input.subagent_type), subagent_stop 으로 닫음
+- post_tool_use 는 tool_use_id 우선, 없으면 같은 이름 LIFO 로 닫고 ms 계산
+
+## GET /api/groups
+```json
+{ "groups": [ {
+    "provider": "claude", "label": "Claude Code", "installed": true,
+    "usage": { "rate5h": {...}, "rate7d": {...}, "costUsd": 12.3 },
+    "plan": null,
+    "sessions": [ /* 확장 Session 카드 */ ]
+} ] }
+```
+세션 0개여도 어댑터 detect() 가 설치 확인한 프로바이더는 포함. 정렬: 세션 많은 순.
+
+## Provider 어댑터 인터페이스 (전부 격리, throw 금지)
+```js
+// adapters/<provider>.js
+export async function detect()           // → { installed, version?, plan? } | { installed:false }
+export async function backfillSessions() // → [{sessionId, provider, name?, cwd?, lastSeen, source:'history'}]
+```
+
+## Map (오케스트레이션 블루프린트 — 편집기+내보내기. 실행은 Phase 4)
+- `GET /api/map` → `{ "nodes": [{id,type:"provider|mcp|note",x,y,label,meta}], "edges": [{id,from,to,kind:"mcp|flow",label?}] }`
+- `PUT /api/map` 전체 문서 저장 (SQLite kv)
+- `GET /api/mcp/catalog` → 알려진 MCP 서버 목록 + 설정 템플릿 (github, obsidian, filesystem, …)
+- `GET /api/map/export` → 맵의 mcp 노드들로 `.mcp.json` 스니펫 생성
+
+## bin 추가
+`sauron app` — 데몬 헬스 확인(다운이면 detached 스폰) 후 Chromium 계열 `--app=http://127.0.0.1:4870` 창. 없으면 기본 브라우저.

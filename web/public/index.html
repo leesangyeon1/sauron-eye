@@ -7,30 +7,69 @@
   :root {
     --bg: #0d1117; --card: #161b22; --border: #30363d; --fg: #c9d1d9; --dim: #8b949e;
     --green: #3fb950; --amber: #d29922; --red: #f85149; --blue: #58a6ff; --grey: #6e7681;
+    --chip: #1c2432;
   }
   @media (prefers-color-scheme: light) {
-    :root { --bg: #f6f8fa; --card: #ffffff; --border: #d0d7de; --fg: #1f2328; --dim: #656d76; }
+    :root { --bg: #f6f8fa; --card: #ffffff; --border: #d0d7de; --fg: #1f2328; --dim: #656d76;
+      --chip: #eef1f5; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg);
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
     font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   .num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
-    background: var(--bg); z-index: 1; }
+  .dim { color: var(--dim); }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+  .btn { background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; font-size: 12px; }
+  .btn:hover { border-color: var(--dim); }
+  .x { color: var(--dim); font-size: 14px; margin-left: auto; }
+
+  header { display: flex; align-items: center; gap: 12px; flex: none;
+    padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg); z-index: 5; }
   header h1 { font-size: 16px; margin: 0; }
   #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); flex: none; }
   #dot.open { background: var(--green); }
-  #quota { display: flex; gap: 16px; margin-left: auto; flex-wrap: wrap; }
-  .gauge { min-width: 190px; }
-  .gauge .lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); }
-  .gauge .track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 2px; }
-  .gauge .fill { height: 100%; border-radius: 3px; transition: width .4s; }
-  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 12px; padding: 16px; }
+  #tabs { margin-left: auto; display: flex; gap: 4px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  #tabs a { color: var(--dim); text-decoration: none; padding: 4px 14px; border-radius: 6px; font-size: 13px; }
+  #tabs a.on { color: var(--fg); background: var(--border); }
+
+  main { flex: 1; min-height: 0; }
+  #view-sessions { overflow-y: auto; padding: 12px 16px; }
+  .empty { padding: 48px 16px; text-align: center; color: var(--dim); }
+
+  /* ---- provider groups ---- */
+  details.group { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px;
+    background: color-mix(in srgb, var(--card) 55%, var(--bg)); }
+  details.group > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; cursor: pointer; list-style: none; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  .pglyph { font-size: 15px; }
+  .plabel { font-weight: 700; font-size: 14px; }
+  .pbadge { font-size: 10px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border);
+    color: var(--dim); text-transform: uppercase; letter-spacing: .4px; }
+  .pbadge.ok { color: var(--green); border-color: var(--green); }
+  .pbadge.plan { color: var(--blue); border-color: var(--blue); text-transform: none; }
+  .gwrap { display: flex; gap: 14px; margin-left: auto; }
+  .gauge { min-width: 130px; }
+  .gauge .lbl { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); }
+  .gauge .track { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 2px; }
+  .gauge .fill { height: 100%; transition: width .4s; }
+  .pcost { font-size: 12px; }
+  .pcount { font-size: 12px; color: var(--dim); }
+  .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px; padding: 0 14px 14px; }
+  .gempty { padding: 0 14px 14px; color: var(--dim); font-size: 12px; }
+  details.hist { padding: 0 14px 12px; }
+  details.hist summary { cursor: pointer; color: var(--dim); font-size: 12px; }
+  details.hist .pgrid { padding: 10px 0 0; }
+
+  /* ---- session cards ---- */
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px 12px; }
-  .card.ended { opacity: .55; }
+    padding: 10px 12px; cursor: pointer; }
+  .card:hover { border-color: var(--dim); }
+  .card.ended { opacity: .5; }
   .card .top { display: flex; align-items: center; gap: 8px; }
   .badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
     padding: 2px 7px; border-radius: 10px; color: #fff; flex: none; }
@@ -46,32 +85,172 @@
     font-size: 12px; color: var(--dim); }
   .ctx { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 6px; }
   .ctx div { height: 100%; }
+  .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .chip { font-size: 11px; padding: 2px 7px; border-radius: 9px; background: var(--chip);
+    border: 1px solid var(--border); white-space: nowrap; }
+  .chip.run { border-color: var(--green); color: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+  .chip.agent { border-color: var(--blue); color: var(--blue); }
+  .recent { margin-top: 6px; font-size: 11px; color: var(--dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .where { margin-top: 6px; font-size: 12px; color: var(--dim);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #empty { padding: 48px 16px; text-align: center; color: var(--dim); }
-  details { padding: 0 16px 16px; }
-  summary { cursor: pointer; color: var(--dim); font-size: 13px; }
-  details #hgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 12px; margin-top: 12px; }
+  .foot { margin-top: 4px; }
+
+  /* ---- slide-over panel ---- */
+  #shade { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 8; }
+  #panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(400px, 92vw); z-index: 9;
+    background: var(--bg); border-left: 1px solid var(--border); padding: 16px; overflow-y: auto;
+    transform: translateX(105%); transition: transform .2s ease; }
+  #panel.open { transform: none; }
+  .phead { display: flex; align-items: center; gap: 8px; }
+  .phead b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .psub { margin-top: 6px; font-size: 12px; color: var(--dim); }
+  .pids { margin-top: 10px; font-size: 11px; color: var(--dim); display: flex;
+    flex-direction: column; gap: 6px; }
+  .pids > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pids .btn { align-self: flex-start; max-width: 100%; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  #panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--dim); margin: 18px 0 6px; }
+  #panel table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #panel th { text-align: left; color: var(--dim); font-weight: 400; font-size: 10px;
+    border-bottom: 1px solid var(--border); padding: 2px 6px 2px 0; }
+  #panel td { padding: 3px 6px 3px 0; border-bottom: 1px solid var(--border);
+    overflow-wrap: anywhere; }
+  .tl { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+  .tldot { width: 8px; height: 8px; border-radius: 50%; background: var(--grey); flex: none; }
+  .tldot.run { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+
+  /* ---- map tab ---- */
+  #view-map { display: flex; overflow: hidden; }
+  #palette { width: 170px; flex: none; border-right: 1px solid var(--border); overflow-y: auto;
+    padding: 10px 8px; background: color-mix(in srgb, var(--card) 55%, var(--bg)); }
+  .psec { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--dim);
+    margin: 12px 4px 4px; }
+  .psec:first-child { margin-top: 0; }
+  .pitem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    padding: 6px 8px; border-radius: 6px; font-size: 13px; }
+  .pitem:hover { background: var(--chip); }
+  .pitem.on { background: var(--chip); outline: 1px solid var(--blue); }
+  .pnone { font-size: 11px; color: var(--dim); padding: 2px 8px; }
+  #canvas { flex: 1; position: relative; min-width: 0; }
+  #mapbar { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 3;
+    display: flex; align-items: center; gap: 8px; pointer-events: none; }
+  #mapbar .btn, #mapbar span { pointer-events: auto; }
+  #mdirty { color: var(--amber); }
+  #mapbar .hint { margin-left: auto; font-size: 11px; color: var(--dim);
+    background: var(--bg); padding: 2px 8px; border-radius: 6px; opacity: .85; }
+  #msvg { width: 100%; height: 100%; display: block; touch-action: none;
+    background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 24px 24px; }
+  #msvg.grab { cursor: grab; }
+  #msvg.place { cursor: crosshair; }
+  .node { cursor: move; }
+  .node rect { fill: var(--card); stroke: var(--border); stroke-width: 1.2; }
+  .node.note rect { fill: transparent; stroke: var(--dim); stroke-dasharray: 4 3; }
+  .node.sel rect { stroke: var(--blue); stroke-width: 2; }
+  .nglyph { font-size: 14px; }
+  .nlbl { font-size: 13px; fill: var(--fg); }
+  .node.note .nlbl { font-size: 12px; fill: var(--dim); }
+  .node text { user-select: none; pointer-events: none; }
+  .handle { fill: var(--bg); stroke: var(--blue); stroke-width: 1.5; opacity: 0; cursor: crosshair; }
+  .node:hover .handle { opacity: 1; }
+  .ehit { stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: pointer; }
+  .eline { fill: none; stroke: var(--dim); stroke-width: 1.6; pointer-events: none; }
+  .eline.flow { stroke-dasharray: 6 4; }
+  .edgeg.sel .eline { stroke: var(--blue); stroke-width: 2.4; }
+  .elbl { font-size: 11px; fill: var(--dim); text-anchor: middle; pointer-events: none; }
+  #tmpedge { fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-dasharray: 4 3;
+    pointer-events: none; display: none; }
+  #tmpedge.on { display: block; }
+  #medit { position: absolute; z-index: 4; font: 13px/1.3 inherit; color: var(--fg);
+    background: var(--card); border: 1px solid var(--blue); border-radius: 4px; padding: 3px 6px; }
+  #mempty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--dim); pointer-events: none; }
+
+  /* ---- modal / toast ---- */
+  #modal { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .mbox { background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    width: min(640px, 100%); max-height: 85vh; display: flex; flex-direction: column; padding: 16px; }
+  .mhead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  #mx-pre { flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; font-size: 12px; margin: 0; }
+  #mx-hints { margin-top: 10px; font-size: 12px; color: var(--dim); }
+  .hintline { padding: 2px 0; }
+  .mfoot { margin-top: 12px; display: flex; justify-content: flex-end; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 11;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 18px; font-size: 13px; }
 </style>
 
 <header>
   <h1>👁️ Sauron Eye</h1>
   <div id="dot" title="SSE"></div>
-  <div id="quota"></div>
+  <nav id="tabs">
+    <a href="#sessions" id="tab-a-sessions">Sessions</a>
+    <a href="#map" id="tab-a-map">Map</a>
+  </nav>
 </header>
-<div id="empty" hidden>세션 없음 — Claude Code 세션을 열면 여기 나타납니다. (sauron install 을 실행했는지 확인)</div>
-<div id="grid"></div>
-<details id="history" hidden><summary>History</summary><div id="hgrid"></div></details>
+
+<main id="view-sessions">
+  <div id="empty-s" class="empty" hidden>세션 없음 — Claude Code 세션을 열면 여기 나타납니다. (sauron install 을 실행했는지 확인)</div>
+  <div id="groups"></div>
+</main>
+
+<main id="view-map" hidden>
+  <div id="palette"></div>
+  <div id="canvas">
+    <div id="mapbar">
+      <button class="btn" id="msave">저장 <span id="mdirty" hidden>●</span></button>
+      <button class="btn" id="mexport">내보내기</button>
+      <span class="hint">팔레트 클릭→캔버스 배치 · 드래그 이동 · ○드래그 연결 · dblclick 이름 · Space/휠 팬·줌 · ⌫ 삭제 · ⌘S 저장</span>
+    </div>
+    <svg id="msvg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="#8b949e"/>
+        </marker>
+      </defs>
+      <g id="world">
+        <g id="edges"></g>
+        <path id="tmpedge"/>
+        <g id="nodes"></g>
+      </g>
+    </svg>
+    <input id="medit" hidden>
+    <div id="mempty" hidden>팔레트에서 노드를 골라 캔버스를 클릭하세요</div>
+  </div>
+</main>
+
+<div id="shade" hidden></div>
+<aside id="panel"></aside>
+<div id="modal" hidden>
+  <div class="mbox">
+    <div class="mhead"><b>.mcp.json 내보내기</b><button class="x" id="mxclose">✕</button></div>
+    <pre id="mx-pre" class="num"></pre>
+    <div id="mx-hints"></div>
+    <div class="mfoot"><button class="btn" id="mxcopy">⧉ 복사</button></div>
+  </div>
+</div>
+<div id="toast" hidden></div>
 
 <script>
-const sessions = new Map();
-let quota = null;
 const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ramp = p => p > 85 ? 'var(--red)' : p > 60 ? 'var(--amber)' : 'var(--green)';
+const uid = p => p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-const rampColor = p => p > 85 ? 'var(--red)' : p > 60 ? 'var(--amber)' : 'var(--green)';
+const PROVIDERS = {
+  claude:      { glyph: '🟠', label: 'Claude Code', tint: '#d97757' },
+  codex:       { glyph: '⬛', label: 'Codex',       tint: '#8b949e' },
+  gemini:      { glyph: '🔷', label: 'Gemini CLI',  tint: '#4796e3' },
+  cursor:      { glyph: '▮',  label: 'Cursor',      tint: '#7f8ea3' },
+  antigravity: { glyph: '✴',  label: 'Antigravity', tint: '#b57ee5' },
+  unknown:     { glyph: '·',  label: 'Unknown',     tint: '#6e7681' },
+};
+const SORT = { needs_input: 0, working: 1, idle: 2, stale: 3, ended: 4 };
 
+// ---------- time helpers ----------
 function rel(ts) {
   if (!ts) return '';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -80,31 +259,72 @@ function rel(ts) {
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
 }
-
+function dur(ms) {
+  if (ms == null || isNaN(ms) || ms < 0) return '';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  const s = ms / 1000;
+  if (s < 60) return (s < 10 ? s.toFixed(1) : Math.round(s)) + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + Math.round(s % 60) + 's';
+  return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+}
+function age(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ' + (m % 60) + 'm';
+  return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+}
 function countdown(iso) {
   if (!iso) return '';
   const ms = new Date(iso) - Date.now();
   if (isNaN(ms)) return '';
   if (ms <= 0) return 'resets soon';
   const m = Math.floor(ms / 60000), h = Math.floor(m / 60);
-  if (h >= 24) return `resets in ${Math.floor(h / 24)}d ${h % 24}h`;
-  return h ? `resets in ${h}h ${m % 60}m` : `resets in ${m}m`;
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  return h ? `${h}h ${m % 60}m` : `${m}m`;
+}
+function shortTool(t) {
+  const n = t?.name ?? '';
+  const m = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(n);
+  return m ? m[1] + ':' + m[2] : n;
 }
 
-function renderQuota() {
-  const p = quota && (quota.claude || Object.values(quota)[0]);
-  if (!p) { $('quota').innerHTML = ''; return; }
-  $('quota').innerHTML = [['5h', p.rate5h], ['7d', p.rate7d]].map(([label, r]) => {
-    if (!r) return '';
-    const pct = Math.min(100, r.usedPct ?? r.used_pct ?? 0);
-    return `<div class="gauge">
-      <div class="lbl"><span>${label} <span class="num">${pct}%</span></span><span>${esc(countdown(r.resetsAt ?? r.resets_at))}</span></div>
-      <div class="track"><div class="fill" style="width:${pct}%;background:${rampColor(pct)}"></div></div>
-    </div>`;
-  }).join('');
+// ---------- sessions state ----------
+const groupMeta = new Map(); // provider -> {label, installed, plan, usage}
+const sessions = new Map();  // sessionId -> session
+const ui = { open: new Map() }; // details open overrides, key g:<p> / h:<p>
+const openState = (k, d) => ui.open.has(k) ? ui.open.get(k) : d;
+let tab = 'sessions';
+let panelId = null;
+
+function upsert(s) {
+  if (!s || !s.sessionId) return;
+  const prev = sessions.get(s.sessionId);
+  // SSE events may carry name:null (adapter decorates REST only) — keep a known name
+  sessions.set(s.sessionId, { ...prev, ...s, name: s.name ?? prev?.name ?? null });
 }
 
-const STATE_ORDER = { needs_input: 0, working: 1, idle: 2, stale: 3, ended: 4 };
+async function loadGroups() {
+  try {
+    const r = await fetch('/api/groups');
+    const j = await r.json();
+    for (const g of j.groups ?? []) {
+      if (!g?.provider) continue;
+      groupMeta.set(g.provider, { label: g.label, installed: !!g.installed, plan: g.plan ?? null, usage: g.usage ?? null });
+      for (const s of g.sessions ?? []) upsert({ ...s, provider: s.provider ?? g.provider });
+    }
+  } catch {}
+  renderSessions();
+}
+
+function gauge(label, r) {
+  if (!r) return '';
+  const pct = Math.min(100, r.usedPct ?? r.used_pct ?? 0);
+  const cd = countdown(r.resetsAt ?? r.resets_at);
+  return `<span class="gauge"><span class="lbl"><span>${label} <span class="num">${pct}%</span></span><span>${esc(cd)}</span></span>
+    <span class="track" style="display:block"><span class="fill" style="display:block;width:${pct}%;background:${ramp(pct)}"></span></span></span>`;
+}
 
 function card(s) {
   const name = s.name || (s.sessionId || '').slice(0, 8);
@@ -112,69 +332,518 @@ function card(s) {
   const ctx = s.contextPct != null ? Math.min(100, s.contextPct) : null;
   const dir = s.cwd ? s.cwd.split('/').filter(Boolean).pop() : '';
   const where = dir + (s.gitBranch ? ' ⎇ ' + s.gitBranch : '');
-  return `<div class="card ${s.state === 'ended' ? 'ended' : ''}">
+  const a = s.activity || {}, now = Date.now();
+  const chips = [
+    ...(a.openTools ?? []).map(t => `<span class="chip run">⚙ ${esc(shortTool(t))} ${dur(now - (t.startedAt || now))}</span>`),
+    ...(a.agents ?? []).filter(g => g.endedAt == null).map(g => `<span class="chip agent">🤖 ${esc(g.type || 'agent')} ${dur(now - (g.startedAt || now))}</span>`),
+    ...(a.skills ?? []).slice(0, 3).map(k => `<span class="chip">📘 ${esc(k.name)}${k.count > 1 ? ' ×' + k.count : ''}</span>`),
+    ...(a.mcpServers ?? []).map(m => `<span class="chip">🔌 ${esc(m)}</span>`),
+  ].join('');
+  const rec = (a.recentTools ?? []).slice(-5);
+  const recLine = rec.length
+    ? `<div class="recent num">${rec.map(t => esc(shortTool(t))).join('·')} ${dur(rec[rec.length - 1].ms)}</div>` : '';
+  return `<div class="card ${s.state === 'ended' ? 'ended' : ''}" data-sid="${esc(s.sessionId)}">
     <div class="top"><span class="badge ${esc(s.state || 'stale')}">${esc(s.state || '?')}</span>
-      <span class="name" title="${esc(s.sessionId || '')}">${esc(name)}</span></div>
+      <span class="name" title="${esc(s.sessionId)}">${esc(name)}</span></div>
     <div class="meta"><span>${esc(s.model || '')}</span><span class="num">${cost}</span></div>
-    ${ctx != null ? `<div class="meta"><span>context</span><span class="num">${ctx}%</span></div>
-      <div class="ctx"><div style="width:${ctx}%;background:${rampColor(ctx)}"></div></div>` : ''}
+    ${ctx != null ? `<div class="ctx" title="context ${ctx}%"><div style="width:${ctx}%;background:${ramp(ctx)}"></div></div>` : ''}
+    ${chips ? `<div class="strip">${chips}</div>` : ''}
+    ${recLine}
     <div class="where">${esc(where)}</div>
-    <div class="meta"><span></span><span class="num">${rel(s.lastSeen)}</span></div>
+    <div class="meta foot"><span class="num">${s.firstSeen ? age(Date.now() - s.firstSeen) : ''}</span><span class="num">${rel(s.lastSeen)}</span></div>
   </div>`;
 }
 
-function render() {
-  const all = [...sessions.values()].sort((a, b) =>
-    (STATE_ORDER[a.state] ?? 3) - (STATE_ORDER[b.state] ?? 3) || (b.lastSeen || 0) - (a.lastSeen || 0));
-  const live = all.filter(s => s.state !== 'ended' && s.source !== 'history');
-  const hist = all.filter(s => s.state === 'ended' || s.source === 'history');
-  $('grid').innerHTML = live.map(card).join('');
-  $('hgrid').innerHTML = hist.map(card).join('');
-  $('empty').hidden = all.length > 0;
-  $('history').hidden = hist.length === 0;
-  renderQuota();
+function groupHtml(p, m, list) {
+  const P = PROVIDERS[p] ?? PROVIDERS.unknown;
+  const sorted = [...list].sort((a, b) =>
+    (SORT[a.state] ?? 3) - (SORT[b.state] ?? 3) || (b.lastSeen || 0) - (a.lastSeen || 0));
+  const live = sorted.filter(s => s.state !== 'ended' && s.source !== 'history');
+  const hist = sorted.filter(s => s.state === 'ended' || s.source === 'history');
+  const open = openState('g:' + p, !!(m.installed || list.length)); // collapsed if not installed & 0 sessions
+  const u = m.usage;
+  const gauges = u ? gauge('5h', u.rate5h) + gauge('7d', u.rate7d) : '';
+  const cost = u?.costUsd != null ? `<span class="num pcost">$${Number(u.costUsd).toFixed(2)}</span>` : '';
+  return `<details class="group" data-tkey="g:${esc(p)}"${open ? ' open' : ''}>
+    <summary>
+      <span class="pglyph">${P.glyph}</span><span class="plabel">${esc(m.label || P.label)}</span>
+      <span class="pbadge ${m.installed ? 'ok' : ''}">${m.installed ? 'installed' : 'not installed'}</span>
+      ${m.plan ? `<span class="pbadge plan">${esc(m.plan)}</span>` : ''}
+      <span class="gwrap">${gauges}</span>${cost}
+      <span class="pcount num">${live.length} session${live.length === 1 ? '' : 's'}</span>
+    </summary>
+    ${live.length ? `<div class="pgrid">${live.map(card).join('')}</div>` : '<div class="gempty">라이브 세션 없음</div>'}
+    ${hist.length ? `<details class="hist" data-tkey="h:${esc(p)}"${openState('h:' + p, false) ? ' open' : ''}>
+      <summary>History (${hist.length})</summary><div class="pgrid">${hist.map(card).join('')}</div></details>` : ''}
+  </details>`;
 }
 
-// ponytail: full innerHTML re-render each event; fine for ~20 cards, diff DOM if hundreds.
-function upsert(s) {
-  if (!s || !s.sessionId) return;
-  const prev = sessions.get(s.sessionId);
-  // SSE events carry name:null (adapter decorates REST responses only) — keep a known name
-  sessions.set(s.sessionId, { ...prev, ...s, name: s.name ?? prev?.name ?? null });
+// ponytail: full innerHTML re-render per event/tick; fine for a handful of groups, diff DOM if hundreds of cards.
+function renderSessions() {
+  if (tab !== 'sessions') return;
+  const byProv = new Map();
+  for (const s of sessions.values()) {
+    const p = s.provider || 'claude';
+    if (!byProv.has(p)) byProv.set(p, []);
+    byProv.get(p).push(s);
+  }
+  for (const p of byProv.keys())
+    if (!groupMeta.has(p)) groupMeta.set(p, { label: (PROVIDERS[p] ?? PROVIDERS.unknown).label, installed: false, plan: null, usage: null });
+  const provs = [...groupMeta.keys()].sort((a, b) => {
+    const ca = (byProv.get(a) || []).length, cb = (byProv.get(b) || []).length;
+    return cb - ca || (groupMeta.get(a).installed ? 0 : 1) - (groupMeta.get(b).installed ? 0 : 1) || a.localeCompare(b);
+  });
+  $('groups').innerHTML = provs.map(p => groupHtml(p, groupMeta.get(p), byProv.get(p) || [])).join('');
+  $('empty-s').hidden = provs.length > 0;
 }
 
-async function load() {
-  try {
-    const r = await fetch('/api/sessions?include=history');
-    (await r.json()).sessions?.forEach(upsert);
-  } catch {}
-  try {
-    const r = await fetch('/api/quota');
-    quota = (await r.json()).providers || null;
-  } catch {}
-  render();
+// remember <details> toggles across re-renders (toggle doesn't bubble → capture)
+$('groups').addEventListener('toggle', e => {
+  const k = e.target?.dataset?.tkey;
+  if (k) ui.open.set(k, e.target.open);
+}, true);
+
+// ---------- slide-over detail panel ----------
+// sessionId is attacker-reachable via /ingest and gets pasted into a shell — allowlist it
+const resumeCmd = s => !/^[A-Za-z0-9_-]+$/.test(s.sessionId ?? '') ? null
+  : (s.provider ?? 'claude') === 'claude' ? `claude --resume ${s.sessionId}` : s.sessionId;
+
+function openPanel(id) { panelId = id; renderPanel(); $('panel').classList.add('open'); $('shade').hidden = false; }
+function closePanel() { panelId = null; $('panel').classList.remove('open'); $('shade').hidden = true; }
+
+function renderPanel() {
+  if (!panelId) return;
+  const s = sessions.get(panelId);
+  if (!s) return;
+  const a = s.activity || {}, now = Date.now();
+  const P = PROVIDERS[s.provider] ?? PROVIDERS.unknown;
+  const open = (a.openTools ?? []).map(t => `<span class="chip run">⚙ ${esc(shortTool(t))} ${dur(now - (t.startedAt || now))}</span>`).join('');
+  const agents = (a.agents ?? []).map(g => {
+    const run = g.endedAt == null;
+    return `<div class="tl"><span class="tldot${run ? ' run' : ''}"></span><b>${esc(g.type || 'agent')}</b>
+      <span class="dim">${rel(g.startedAt)}</span><span class="num" style="margin-left:auto">${run ? dur(now - (g.startedAt || now)) + ' …' : dur((g.endedAt || 0) - (g.startedAt || 0))}</span></div>`;
+  }).join('');
+  const skills = (a.skills ?? []).map(k =>
+    `<tr><td>${esc(k.name)}</td><td class="num">×${k.count ?? 1}</td><td class="num dim">${rel(k.lastUsed)}</td></tr>`).join('');
+  const tools = (a.recentTools ?? []).slice().reverse().map(t =>
+    `<tr><td>${esc(shortTool(t))}</td><td class="num dim">${esc(t.server ?? '')}</td><td class="num">${dur(t.ms)}</td><td class="num dim">${rel(t.endedAt)}</td></tr>`).join('');
+  const mcps = (a.mcpServers ?? []).map(m => `<span class="chip">🔌 ${esc(m)}</span>`).join('');
+  $('panel').innerHTML = `
+    <div class="phead"><span class="badge ${esc(s.state || 'stale')}">${esc(s.state || '?')}</span>
+      <b>${esc(s.name || (s.sessionId || '').slice(0, 8))}</b><button class="x" id="pclose">✕</button></div>
+    <div class="psub">${P.glyph} ${esc(P.label)} · ${esc(s.model || '')}${s.costUsd != null ? ' · $' + Number(s.costUsd).toFixed(2) : ''}${s.contextPct != null ? ' · ctx ' + Math.min(100, s.contextPct) + '%' : ''}</div>
+    <div class="pids num"><div title="${esc(s.sessionId)}">${esc(s.sessionId)}</div>
+      ${resumeCmd(s) ? `<button class="btn" data-copy="${esc(resumeCmd(s))}">⧉ ${esc(resumeCmd(s))}</button>` : ''}</div>
+    ${open ? `<h3>실행 중 툴</h3><div class="strip">${open}</div>` : ''}
+    ${agents ? `<h3>에이전트</h3>${agents}` : ''}
+    ${skills ? `<h3>스킬</h3><table><tr><th>name</th><th>count</th><th>last</th></tr>${skills}</table>` : ''}
+    ${tools ? `<h3>최근 툴 (${(a.recentTools ?? []).length})</h3><table><tr><th>tool</th><th>server</th><th>ms</th><th></th></tr>${tools}</table>` : ''}
+    ${mcps ? `<h3>MCP</h3><div class="strip">${mcps}</div>` : ''}
+    ${!open && !agents && !skills && !tools && !mcps ? '<div class="gempty" style="padding:16px 0">활동 데이터 없음</div>' : ''}`;
 }
 
+document.addEventListener('click', e => {
+  const cp = e.target.closest('[data-copy]');
+  if (cp) { navigator.clipboard?.writeText(cp.dataset.copy).then(() => toast('복사됨'), () => {}); return; }
+  if (e.target.id === 'pclose' || e.target.id === 'shade') return closePanel();
+  const c = e.target.closest('.card[data-sid]');
+  if (c && $('view-sessions').contains(c)) openPanel(c.dataset.sid);
+});
+
+// ---------- SSE (v1 behavior kept) ----------
 const BACKOFF = [2000, 5000, 10000];
 let attempt = 0, es = null;
-
 function connect() {
   es = new EventSource('/api/events');
-  es.onopen = () => { attempt = 0; $('dot').classList.add('open'); load(); };
+  es.onopen = () => { attempt = 0; $('dot').classList.add('open'); loadGroups(); };
   es.onerror = () => {
     es.close();
     $('dot').classList.remove('open');
     setTimeout(connect, BACKOFF[Math.min(attempt++, BACKOFF.length - 1)]);
   };
   es.addEventListener('session', e => {
-    try { upsert(JSON.parse(e.data)); render(); } catch {}
+    try { upsert(JSON.parse(e.data)); renderSessions(); renderPanel(); } catch {}
   });
-  es.addEventListener('quota', e => {
-    try { const d = JSON.parse(e.data); quota = d.providers || d; renderQuota(); } catch {}
+  es.addEventListener('quota', e => { // live usage nudges between 60s group refetches
+    try {
+      const d = JSON.parse(e.data), provs = d.providers || d;
+      for (const [p, q] of Object.entries(provs || {})) {
+        const m = groupMeta.get(p);
+        if (m) m.usage = { ...(m.usage || {}), rate5h: q.rate5h ?? m.usage?.rate5h, rate7d: q.rate7d ?? m.usage?.rate7d };
+      }
+      renderSessions();
+    } catch {}
   });
 }
 
-load();
+// ---------- map state ----------
+const map = {
+  doc: { nodes: [], edges: [], meta: {} },
+  vp: { x: 40, y: 60, z: 1 },
+  sel: null, place: null, drag: null, edgeDrag: null, panning: null,
+  space: false, dirty: false,
+};
+let mcpCatalog = [];
+let mapInited = false;
+const svg = $('msvg');
+const nodeById = id => map.doc.nodes.find(n => n.id === id);
+const kindFor = (a, b) =>
+  (a.type === 'provider' && b.type === 'mcp') || (a.type === 'mcp' && b.type === 'provider') ? 'mcp' : 'flow';
+
+const tlen = s => [...String(s)].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 2 : 1), 0);
+function wrapText(s, units = 30) {
+  const lines = []; let cur = '';
+  for (const w of String(s).split(/\s+/)) {
+    const t = cur ? cur + ' ' + w : w;
+    if (tlen(t) > units && cur) { lines.push(cur); cur = w; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [''];
+}
+const nodeW = n => n.type === 'note' ? 250 : Math.min(260, Math.max(112, 46 + tlen(n.label) * 7.5));
+const nodeH = n => n.type === 'note' ? 16 + wrapText(n.label).length * 17 : 44;
+const center = n => ({ x: n.x + nodeW(n) / 2, y: n.y + nodeH(n) / 2 });
+function rectEdge(n, toward, pad = 3) {
+  const c = center(n), dx = toward.x - c.x, dy = toward.y - c.y;
+  if (!dx && !dy) return c;
+  const t = Math.min((nodeW(n) / 2 + pad) / Math.abs(dx || 1e-9), (nodeH(n) / 2 + pad) / Math.abs(dy || 1e-9));
+  return { x: c.x + dx * Math.min(t, 1), y: c.y + dy * Math.min(t, 1) };
+}
+function toWorld(e) {
+  const r = svg.getBoundingClientRect();
+  return { x: (e.clientX - r.left - map.vp.x) / map.vp.z, y: (e.clientY - r.top - map.vp.y) / map.vp.z };
+}
+const applyVp = () => $('world').setAttribute('transform', `translate(${map.vp.x} ${map.vp.y}) scale(${map.vp.z})`);
+function updateDirty() { $('mdirty').hidden = !map.dirty; }
+function markDirty() { if (!map.dirty) { map.dirty = true; updateDirty(); } }
+
+// ponytail: full SVG innerHTML re-render on every change incl. drag frames; fine for tens of nodes.
+function renderWorld() {
+  applyVp();
+  const byId = Object.fromEntries(map.doc.nodes.map(n => [n.id, n]));
+  $('edges').innerHTML = map.doc.edges.map(ed => {
+    const a = byId[ed.from], b = byId[ed.to];
+    if (!a || !b) return '';
+    const p1 = rectEdge(a, center(b)), p2 = rectEdge(b, center(a), ed.kind === 'flow' ? 8 : 3);
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    const d = `M${p1.x.toFixed(1)} ${p1.y.toFixed(1)}L${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    const sel = map.sel?.type === 'edge' && map.sel.id === ed.id ? ' sel' : '';
+    return `<g class="edgeg${sel}" data-eid="${esc(ed.id)}">
+      <path class="ehit" d="${d}"/>
+      <path class="eline${ed.kind === 'flow' ? ' flow' : ''}" d="${d}"${ed.kind === 'flow' ? ' marker-end="url(#arrow)"' : ''}/>
+      ${ed.label ? `<text class="elbl" x="${mid.x}" y="${mid.y - 7}">${esc(ed.label)}</text>` : ''}
+    </g>`;
+  }).join('');
+  $('nodes').innerHTML = map.doc.nodes.map(n => {
+    const w = nodeW(n), h = nodeH(n);
+    const sel = map.sel?.type === 'node' && map.sel.id === n.id ? ' sel' : '';
+    const tint = n.type === 'provider' ? (PROVIDERS[n.meta?.provider]?.tint ?? '#888') : null;
+    let body;
+    if (n.type === 'note') {
+      body = `<text class="nlbl" x="12" y="26">${wrapText(n.label).map((l, i) =>
+        `<tspan x="12"${i ? ' dy="17"' : ''}>${esc(l)}</tspan>`).join('')}</text>`;
+    } else {
+      const glyph = n.type === 'provider' ? (PROVIDERS[n.meta?.provider]?.glyph ?? '·') : '🔌';
+      body = `<text class="nglyph" x="12" y="${h / 2 + 5}">${glyph}</text><text class="nlbl" x="36" y="${h / 2 + 5}">${esc(n.label)}</text>`;
+    }
+    return `<g class="node ${esc(n.type)}${sel}" data-nid="${esc(n.id)}" transform="translate(${n.x} ${n.y})">
+      <rect width="${w}" height="${h}" rx="10"${tint ? ` style="stroke:${tint};fill:${tint}22"` : ''}/>
+      ${body}<circle class="handle" cx="${w}" cy="${h / 2}" r="7" data-hid="${esc(n.id)}"/>
+    </g>`;
+  }).join('');
+  $('mempty').hidden = map.doc.nodes.length > 0;
+}
+
+function seed() {
+  const N = (type, x, y, label, meta) => ({ id: uid('n'), type, x, y, label, meta: meta ?? {} });
+  map.doc = {
+    nodes: [
+      N('provider', 80, 100, 'Claude Code', { provider: 'claude' }),
+      N('provider', 380, 100, 'Codex', { provider: 'codex' }),
+      N('provider', 660, 100, 'Gemini CLI', { provider: 'gemini' }),
+      N('note', 80, 230, '드래그·연결로 오케스트레이션 설계 (예: fable=계획 → codex=코딩 → gemini=리서치)'),
+    ],
+    edges: [], meta: {},
+  };
+  markDirty();
+}
+
+async function loadMap() {
+  try {
+    const j = await (await fetch('/api/map')).json();
+    map.doc = {
+      nodes: Array.isArray(j.nodes) ? j.nodes.filter(n => n?.id).map(n => ({ ...n, x: Number(n.x) || 0, y: Number(n.y) || 0 })) : [],
+      edges: Array.isArray(j.edges) ? j.edges.filter(e => e?.id) : [],
+      meta: j.meta && typeof j.meta === 'object' ? j.meta : {},
+    };
+  } catch { map.doc = { nodes: [], edges: [], meta: {} }; }
+  if (!map.doc.nodes.length) seed(); // ponytail: client-side seed; server-side default if multiple clients race
+  const v = map.doc.meta?.viewport;
+  if (v && typeof v.x === 'number') map.vp = { x: v.x, y: v.y || 0, z: Math.min(2.5, Math.max(0.4, v.z || 1)) };
+  renderWorld();
+}
+
+async function loadCatalog() {
+  try {
+    const j = await (await fetch('/api/mcp/catalog')).json();
+    const l = j.servers ?? j.catalog ?? j;
+    mcpCatalog = Array.isArray(l) ? l.map(x => typeof x === 'string' ? x : x?.id ?? x?.name).filter(Boolean)
+      : l && typeof l === 'object' ? Object.keys(l) : [];
+  } catch { mcpCatalog = []; }
+  renderPalette();
+}
+
+async function saveMap() {
+  map.doc.meta = { ...(map.doc.meta || {}), viewport: { ...map.vp } };
+  try {
+    const r = await fetch('/api/map', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(map.doc),
+    });
+    if (r.ok) { map.dirty = false; updateDirty(); toast('saved'); }
+    else toast('저장 실패');
+  } catch { toast('저장 실패'); }
+}
+
+// ---------- palette ----------
+function renderPalette() {
+  const item = (type, key, glyph, label) => {
+    const on = map.place && map.place.type === type && map.place.key === key ? ' on' : '';
+    return `<button class="pitem${on}" data-type="${type}" data-key="${esc(key)}"><span>${glyph}</span>${esc(label)}</button>`;
+  };
+  $('palette').innerHTML =
+    `<div class="psec">Providers</div>` +
+    Object.entries(PROVIDERS).filter(([k]) => k !== 'unknown').map(([k, p]) => item('provider', k, p.glyph, p.label)).join('') +
+    `<div class="psec">MCP</div>` +
+    (mcpCatalog.map(n => item('mcp', n, '🔌', n)).join('') || '<div class="pnone">catalog 없음</div>') +
+    `<div class="psec">기타</div>` + item('note', 'note', '📝', '메모');
+  svg.classList.toggle('place', !!map.place);
+}
+$('palette').addEventListener('click', e => {
+  const b = e.target.closest('.pitem');
+  if (!b) return;
+  const cur = map.place;
+  map.place = cur && cur.type === b.dataset.type && cur.key === b.dataset.key
+    ? null : { type: b.dataset.type, key: b.dataset.key };
+  renderPalette();
+});
+
+function placeNode(pt) {
+  const p = map.place;
+  map.place = null;
+  renderPalette();
+  const n = { id: uid('n'), type: p.type, x: Math.round(pt.x), y: Math.round(pt.y), label: '', meta: {} };
+  if (p.type === 'provider') { n.meta.provider = p.key; n.label = PROVIDERS[p.key]?.label ?? p.key; }
+  else if (p.type === 'mcp') { n.meta.server = p.key; n.label = p.key; }
+  else n.label = '메모';
+  map.doc.nodes.push(n);
+  map.sel = { type: 'node', id: n.id };
+  markDirty();
+  renderWorld();
+}
+
+// ---------- canvas interactions ----------
+svg.addEventListener('pointerdown', e => {
+  if (map.space || e.button === 1) {
+    map.panning = { sx: e.clientX, sy: e.clientY, ox: map.vp.x, oy: map.vp.y };
+    svg.style.cursor = 'grabbing';
+    e.preventDefault();
+    return;
+  }
+  if (e.button !== 0) return;
+  const pt = toWorld(e);
+  if (map.place) return placeNode(pt);
+  const h = e.target.closest?.('.handle');
+  if (h) { map.edgeDrag = { from: h.dataset.hid }; e.preventDefault(); return; }
+  const ng = e.target.closest?.('.node');
+  if (ng) {
+    const n = nodeById(ng.dataset.nid);
+    if (!n) return;
+    map.sel = { type: 'node', id: n.id };
+    map.drag = { id: n.id, dx: pt.x - n.x, dy: pt.y - n.y };
+    renderWorld();
+    return;
+  }
+  const eg = e.target.closest?.('.edgeg');
+  if (eg) { map.sel = { type: 'edge', id: eg.dataset.eid }; renderWorld(); return; }
+  if (map.sel) { map.sel = null; renderWorld(); }
+});
+
+window.addEventListener('pointermove', e => {
+  if (map.panning) {
+    map.vp.x = map.panning.ox + e.clientX - map.panning.sx;
+    map.vp.y = map.panning.oy + e.clientY - map.panning.sy;
+    applyVp();
+    return;
+  }
+  if (map.drag) {
+    const n = nodeById(map.drag.id);
+    if (!n) { map.drag = null; return; }
+    const pt = toWorld(e);
+    n.x = Math.round(pt.x - map.drag.dx);
+    n.y = Math.round(pt.y - map.drag.dy);
+    markDirty();
+    renderWorld();
+    return;
+  }
+  if (map.edgeDrag) {
+    const n = nodeById(map.edgeDrag.from);
+    if (!n) return;
+    const c = center(n), pt = toWorld(e);
+    const t = $('tmpedge');
+    t.setAttribute('d', `M${c.x} ${c.y}L${pt.x} ${pt.y}`);
+    t.classList.add('on');
+  }
+});
+
+window.addEventListener('pointerup', e => {
+  if (map.panning) { map.panning = null; svg.style.cursor = ''; return; }
+  if (map.drag) { map.drag = null; return; }
+  if (map.edgeDrag) {
+    const from = map.edgeDrag.from;
+    map.edgeDrag = null;
+    $('tmpedge').classList.remove('on');
+    // ponytail: drop-target via elementFromPoint (temp line is pointer-events:none), no spatial hit-test
+    const ng = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.node');
+    if (ng && ng.dataset.nid !== from) {
+      const a = nodeById(from), b = nodeById(ng.dataset.nid);
+      if (a && b && !map.doc.edges.some(x => x.from === a.id && x.to === b.id)) {
+        map.doc.edges.push({ id: uid('e'), from: a.id, to: b.id, kind: kindFor(a, b) });
+        markDirty();
+      }
+      renderWorld();
+    }
+  }
+});
+
+svg.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = svg.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const nz = Math.min(2.5, Math.max(0.4, map.vp.z * (e.deltaY < 0 ? 1.1 : 0.9)));
+  map.vp.x = mx - (mx - map.vp.x) * (nz / map.vp.z);
+  map.vp.y = my - (my - map.vp.y) * (nz / map.vp.z);
+  map.vp.z = nz;
+  applyVp();
+}, { passive: false });
+
+function editAt(wx, wy, cur, commit) {
+  const inp = $('medit');
+  inp.hidden = false;
+  inp.value = cur;
+  inp.style.left = (wx * map.vp.z + map.vp.x) + 'px';
+  inp.style.top = (wy * map.vp.z + map.vp.y) + 'px';
+  inp.focus();
+  inp.select();
+  inp.onblur = () => { inp.hidden = true; inp.onblur = null; commit(inp.value.trim()); };
+  inp.onkeydown = ev => {
+    if (ev.key === 'Enter') inp.blur();
+    if (ev.key === 'Escape') { inp.onblur = null; inp.hidden = true; }
+    ev.stopPropagation();
+  };
+}
+
+svg.addEventListener('dblclick', e => {
+  const ng = e.target.closest?.('.node');
+  if (ng) {
+    const n = nodeById(ng.dataset.nid);
+    if (!n) return;
+    editAt(n.x, n.y + nodeH(n) + 6, n.label, v => {
+      if (v && v !== n.label) { n.label = v; markDirty(); }
+      renderWorld();
+    });
+    return;
+  }
+  const eg = e.target.closest?.('.edgeg');
+  if (eg) {
+    const ed = map.doc.edges.find(x => x.id === eg.dataset.eid);
+    const a = ed && nodeById(ed.from), b = ed && nodeById(ed.to);
+    if (!a || !b) return;
+    const mx = (center(a).x + center(b).x) / 2, my = (center(a).y + center(b).y) / 2;
+    editAt(mx - 70, my + 8, ed.label ?? '', v => {
+      if (v !== (ed.label ?? '')) { ed.label = v; markDirty(); }
+      renderWorld();
+    });
+  }
+});
+
+function deleteSel() {
+  const s = map.sel;
+  if (!s) return;
+  if (s.type === 'node') {
+    map.doc.nodes = map.doc.nodes.filter(n => n.id !== s.id);
+    map.doc.edges = map.doc.edges.filter(e => e.from !== s.id && e.to !== s.id);
+  } else {
+    map.doc.edges = map.doc.edges.filter(e => e.id !== s.id);
+  }
+  map.sel = null;
+  markDirty();
+  renderWorld();
+}
+
+// ---------- keyboard ----------
+window.addEventListener('keydown', e => {
+  const t = e.target.tagName;
+  if (t === 'INPUT' || t === 'TEXTAREA') return;
+  if ((e.metaKey || e.ctrlKey) && e.key === 's' && tab === 'map') { e.preventDefault(); saveMap(); return; }
+  if (e.key === 'Escape') {
+    closePanel();
+    $('modal').hidden = true;
+    if (tab === 'map' && (map.place || map.sel)) { map.place = null; map.sel = null; renderPalette(); renderWorld(); }
+    return;
+  }
+  if (tab !== 'map') return;
+  if (e.key === ' ') { map.space = true; svg.classList.add('grab'); e.preventDefault(); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && map.sel) { e.preventDefault(); deleteSel(); }
+});
+window.addEventListener('keyup', e => {
+  if (e.key === ' ') { map.space = false; svg.classList.remove('grab'); }
+});
+
+// ---------- export modal / toast ----------
+async function openExport() {
+  let txt = '(export 실패 — 데몬이 v2 인가요?)';
+  try { txt = JSON.stringify(await (await fetch('/api/map/export')).json(), null, 2); } catch {}
+  $('mx-pre').textContent = txt;
+  const provs = [...new Set(map.doc.nodes.filter(n => n.type === 'provider').map(n => n.meta?.provider).filter(Boolean))];
+  const hint = '이 스니펫을 프로젝트 .mcp.json 에 붙여넣으면 해당 MCP 가 연결됩니다';
+  $('mx-hints').innerHTML = provs.length
+    ? provs.map(p => `<div class="hintline">${(PROVIDERS[p] ?? PROVIDERS.unknown).glyph} <b>${esc(p)}</b> — ${hint}</div>`).join('')
+    : `<div class="hintline">${hint}</div>`;
+  $('modal').hidden = false;
+}
+$('mexport').addEventListener('click', openExport);
+$('msave').addEventListener('click', saveMap);
+$('mxclose').addEventListener('click', () => { $('modal').hidden = true; });
+$('modal').addEventListener('click', e => { if (e.target === $('modal')) $('modal').hidden = true; });
+$('mxcopy').addEventListener('click', () =>
+  navigator.clipboard?.writeText($('mx-pre').textContent).then(() => toast('복사됨'), () => {}));
+
+let toastT = null;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastT);
+  toastT = setTimeout(() => { t.hidden = true; }, 1600);
+}
+
+// ---------- routing ----------
+function route() {
+  tab = location.hash === '#map' ? 'map' : 'sessions';
+  $('view-sessions').hidden = tab !== 'sessions';
+  $('view-map').hidden = tab !== 'map';
+  $('tab-a-sessions').classList.toggle('on', tab === 'sessions');
+  $('tab-a-map').classList.toggle('on', tab === 'map');
+  if (tab === 'map' && !mapInited) { mapInited = true; renderPalette(); loadMap(); loadCatalog(); }
+  if (tab === 'sessions') renderSessions();
+}
+window.addEventListener('hashchange', route);
+
+// ---------- boot ----------
+route();
+loadGroups();
 connect();
-setInterval(render, 5000); // tick relative times + countdowns
+setInterval(loadGroups, 60_000);            // detect()/usage refresh
+setInterval(() => { renderSessions(); renderPanel(); }, 5000); // ponytail: 5s tick — chip durations jump 5s, fine
 </script>
+</html>

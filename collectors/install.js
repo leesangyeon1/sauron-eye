@@ -12,6 +12,9 @@ const EVENTS = {
   Stop: 'stop',
   Notification: 'notification',
   UserPromptSubmit: 'user_prompt_submit',
+  PreToolUse: 'pre_tool_use',
+  PostToolUse: 'post_tool_use',
+  SubagentStop: 'subagent_stop',
 };
 const STATUSLINE_CMD = `node ${JSON.stringify(join(HERE, 'statusline.js'))}`;
 const HOOK_JS = join(HERE, 'hook.js');

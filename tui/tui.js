@@ -18,18 +18,6 @@ async function fetchJson(url) {
   return res.json();
 }
 
-function bar(pct) {
-  const n = Math.max(0, Math.min(4, Math.round((pct ?? 0) / 25)));
-  return '▓'.repeat(n) + '░'.repeat(4 - n);
-}
-
-function until(iso) {
-  const ms = Date.parse(iso) - Date.now();
-  if (!iso || Number.isNaN(ms) || ms < 0) return '?';
-  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
-  return h ? `${h}h${m}m` : `${m}m`;
-}
-
 function ago(ts) {
   if (!ts) return '?';
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -44,46 +32,61 @@ function pad(str, w) {
   return str.length > w ? str.slice(0, w - 1) + '…' : str.padEnd(w, ' ');
 }
 
-function headerLine(quota, count) {
-  const c = quota?.providers?.claude;
-  let q = 'quota: n/a';
-  if (c) {
-    const r5 = c.rate5h ?? {}, r7 = c.seven_day ?? c.rate7d ?? {};
-    q = `claude 5h ${bar(r5.usedPct ?? r5.used_pct)} ${r5.usedPct ?? r5.used_pct ?? '?'}% (resets ${until(r5.resetsAt ?? r5.resets_at)})` +
-        ` | 7d ${bar(r7.usedPct ?? r7.used_pct)} ${r7.usedPct ?? r7.used_pct ?? '?'}%`;
-  }
-  return `👁 sauron | ${q} | ${count} session${count === 1 ? '' : 's'}`;
+function activityText(a) {
+  if (!a || typeof a !== 'object') return '-';
+  const agent = (Array.isArray(a.agents) ? a.agents : []).find((g) => g && g.endedAt == null && g.startedAt);
+  const tool = (Array.isArray(a.openTools) ? a.openTools : []).at(-1);
+  // open agent beats a bare open "Task" tool (same thing, more info)
+  if (tool?.name && !(tool.name === 'Task' && agent)) return `${tool.name} ${ago(tool.startedAt)}`;
+  if (agent) return `Task:${agent.type ?? '?'} ${ago(agent.startedAt)}`;
+  const sk = (Array.isArray(a.skills) ? a.skills : []).length;
+  const mc = (Array.isArray(a.mcpServers) ? a.mcpServers : []).length;
+  return sk || mc ? `${sk}sk ${mc}mcp` : '-';
 }
 
-// column widths: [STATE, NAME/ID, MODEL, COST, CTX%, BRANCH, LAST]; CWD gets the rest
-const COLS = [12, 22, 10, 8, 5, 14, 6];
+function groupHeader(g, width) {
+  const u = g?.usage ?? {};
+  let t = `── ${g?.label ?? g?.provider ?? '?'}`;
+  const p5 = u.rate5h?.usedPct, p7 = u.rate7d?.usedPct;
+  if (p5 != null || p7 != null) t += ` · 5h ${p5 ?? '?'}% · 7d ${p7 ?? '?'}%`;
+  if (g?.installed === false) t += ' · not installed';
+  t += ' ';
+  return '\x1b[1m' + (t + '─'.repeat(Math.max(0, width - t.length))).slice(0, width) + RESET;
+}
+
+// column widths: [STATE, NAME/ID, MODEL, ACTIVITY, COST, CTX%, BRANCH, LAST]; CWD gets the rest
+const COLS = [12, 20, 10, 16, 8, 5, 12, 6];
 
 function rowText(s, cwdW) {
   return [
     pad(s.state, COLS[0]),
     pad(s.name || s.sessionId, COLS[1]),
     pad(s.model, COLS[2]),
-    pad(s.costUsd != null ? `$${Number(s.costUsd).toFixed(2)}` : '', COLS[3]),
-    pad(s.contextPct != null ? `${s.contextPct}%` : '', COLS[4]),
-    pad(s.gitBranch, COLS[5]),
-    pad(ago(s.lastSeen), COLS[6]),
+    pad(activityText(s.activity), COLS[3]),
+    pad(s.costUsd != null ? `$${Number(s.costUsd).toFixed(2)}` : '', COLS[4]),
+    pad(s.contextPct != null ? `${s.contextPct}%` : '', COLS[5]),
+    pad(s.gitBranch, COLS[6]),
+    pad(ago(s.lastSeen), COLS[7]),
     pad(s.cwd, cwdW),
   ].join(' ');
 }
 
-function renderFrame({ sessions, quota, selected, footerMsg, down }, width) {
+function renderFrame({ rows, sessions, selected, footerMsg, down }, width) {
   const lines = [];
   const cwdW = Math.max(8, width - COLS.reduce((a, b) => a + b + 1, 0) - 1);
-  lines.push(headerLine(quota, sessions.length).slice(0, width));
+  const n = sessions.length;
+  lines.push(`👁 sauron | ${n} session${n === 1 ? '' : 's'}`.slice(0, width));
   if (down) lines.push('', '\x1b[1;31m  daemon not running — sauron start\x1b[0m', '');
-  const head = ['STATE', 'NAME/ID', 'MODEL', 'COST', 'CTX%', 'BRANCH', 'LAST']
+  const head = ['STATE', 'NAME/ID', 'MODEL', 'ACTIVITY', 'COST', 'CTX%', 'BRANCH', 'LAST']
     .map((h, i) => pad(h, COLS[i])).join(' ') + ' ' + pad('CWD', cwdW);
   lines.push('\x1b[4m' + head.slice(0, width) + RESET);
-  sessions.forEach((s, i) => {
+  for (const r of rows) {
+    if (r.header) { lines.push(groupHeader(r.group, width)); continue; }
+    const s = r.session;
     const color = STATE_COLOR[s.state] ?? '';
-    const inv = i === selected ? '\x1b[7m' : '';
+    const inv = r.idx === selected ? '\x1b[7m' : '';
     lines.push(inv + color + rowText(s, cwdW).slice(0, width) + RESET);
-  });
+  }
   lines.push('', '↑↓/jk select · s spawn · c copy resume · r refresh · q quit'.slice(0, width));
   if (footerMsg) lines.push(footerMsg.slice(0, width));
   return lines;
@@ -91,18 +94,29 @@ function renderFrame({ sessions, quota, selected, footerMsg, down }, width) {
 
 export async function runTui({ port = 4870, once = false } = {}) {
   const base = `http://127.0.0.1:${port}`;
-  const state = { sessions: [], quota: null, selected: 0, footerMsg: '', down: false };
+  const state = { rows: [], sessions: [], selected: 0, footerMsg: '', down: false };
 
   async function refresh() {
+    let g;
     try {
-      const [s, q] = await Promise.all([fetchJson(`${base}/api/sessions`), fetchJson(`${base}/api/quota`)]);
-      state.sessions = Array.isArray(s?.sessions) ? s.sessions : [];
-      state.quota = q;
-      state.down = false;
-      state.selected = Math.min(state.selected, Math.max(0, state.sessions.length - 1));
+      g = await fetchJson(`${base}/api/groups`);
     } catch {
       state.down = true;
+      return;
     }
+    state.down = false;
+    const rows = [], sessions = [];
+    for (const grp of Array.isArray(g?.groups) ? g.groups : []) {
+      rows.push({ header: true, group: grp });
+      for (const s of Array.isArray(grp?.sessions) ? grp.sessions : []) {
+        if (!s || typeof s !== 'object') continue;
+        rows.push({ session: s, idx: sessions.length }); // headers carry no idx → not selectable
+        sessions.push(s);
+      }
+    }
+    state.rows = rows;
+    state.sessions = sessions;
+    state.selected = Math.min(state.selected, Math.max(0, sessions.length - 1));
   }
 
   if (once) {
@@ -126,12 +140,25 @@ export async function runTui({ port = 4870, once = false } = {}) {
   };
   process.on('SIGINT', () => { cleanup(); process.exit(0); });
   process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+  process.on('exit', cleanup);
+  process.on('uncaughtException', (err) => { cleanup(); throw err; }); // restore terminal, then die loudly
 
   function paint() {
     const width = out.columns || 120;
     // repaint from home + clear-to-eol per line, clear rest once (less flicker than full clear)
     const body = renderFrame(state, width).map((l) => l + '\x1b[K').join('\n');
     out.write('\x1b[H' + body + '\x1b[J');
+  }
+
+  // one bad API payload must never take down the alt screen
+  async function tick() {
+    try {
+      await refresh();
+      paint();
+    } catch (e) {
+      state.footerMsg = `tick error: ${String(e?.message ?? e)}`;
+      try { paint(); } catch { /* keep alt screen alive */ }
+    }
   }
 
   function spawnSession() {
@@ -148,6 +175,12 @@ export async function runTui({ port = 4870, once = false } = {}) {
   function copyResume() {
     const s = state.sessions[state.selected];
     if (!s) return;
+    // sessionId is server-supplied and lands in a shell via paste — allowlist it
+    if (!/^[A-Za-z0-9_-]+$/.test(s.sessionId ?? '')) {
+      state.footerMsg = 'unsafe sessionId — not copied';
+      paint();
+      return;
+    }
     const cmd = `claude --resume ${s.sessionId}`;
     if (process.platform === 'darwin') {
       try {
@@ -164,17 +197,18 @@ export async function runTui({ port = 4870, once = false } = {}) {
   readline.emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.on('keypress', async (str, key = {}) => {
-    if (str === 'q' || (key.ctrl && key.name === 'c')) { cleanup(); process.exit(0); }
-    state.footerMsg = '';
-    if (key.name === 'up' || str === 'k') state.selected = Math.max(0, state.selected - 1);
-    else if (key.name === 'down' || str === 'j') state.selected = Math.min(state.sessions.length - 1, state.selected + 1);
-    else if (str === 'r') await refresh();
-    else if (str === 's') spawnSession();
-    else if (str === 'c') { copyResume(); return; }
-    paint();
+    try {
+      if (str === 'q' || (key.ctrl && key.name === 'c')) { cleanup(); process.exit(0); }
+      state.footerMsg = '';
+      if (key.name === 'up' || str === 'k') state.selected = Math.max(0, state.selected - 1);
+      else if (key.name === 'down' || str === 'j') state.selected = Math.min(state.sessions.length - 1, state.selected + 1);
+      else if (str === 'r') await refresh();
+      else if (str === 's') spawnSession();
+      else if (str === 'c') { copyResume(); return; }
+      paint();
+    } catch { /* never crash the alt screen on input */ }
   });
 
-  await refresh();
-  paint();
-  timer = setInterval(async () => { await refresh(); paint(); }, POLL_MS);
+  await tick();
+  timer = setInterval(tick, POLL_MS);
 }

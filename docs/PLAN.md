@@ -6,19 +6,25 @@
 목표: 내 4가지 통증 중 1·2 를 오늘 해결. "세션들이 뭐 하는지 + 쿼터" 라이브.
 
 - [x] 설계/API 계약/파이프라인 문서
-- [ ] core: 데몬(HTTP+SSE), registry 상태머신, SQLite 저장
-- [ ] collectors: statusline 체이닝 수집기, hook 수집기, 안전 설치기(백업+머지)
-- [ ] adapters/claude.js: 세션 이름·히스토리 백필 (격리, 실패 무해)
-- [ ] web: 1페이지 대시보드 (카드, 쿼터 게이지, SSE 라이브)
-- [ ] tui: 테이블 뷰 + tmux 스폰
-- [ ] test: 상태머신 + ingest + 설치 머지 로직
-- [ ] 실전 검증: 실제 세션 2개로 성공 기준 4항목 통과
+- [x] core: 데몬(HTTP+SSE), registry 상태머신, SQLite 저장
+- [x] collectors: statusline 체이닝 수집기, hook 수집기, 안전 설치기(백업+머지)
+- [x] adapters/claude.js: 세션 이름·히스토리 백필 (격리, 실패 무해)
+- [x] web: 1페이지 대시보드 (카드, 쿼터 게이지, SSE 라이브)
+- [x] tui: 테이블 뷰 + tmux 스폰
+- [x] test: 상태머신 + ingest + 설치 머지 로직
+- [ ] 실전 검증: 실제 세션 2개로 성공 기준 4항목 통과 (실설치 승인 대기)
 
-### Phase 2 — dev 브랜치 (보강)
-- OTel receiver → 스킬/플러그인/MCP/서브에이전트 가시화 (통증 3)
-- 웹 에이전트 DAG 트리 (OTel 스팬)
-- Codex 어댑터 (~/.codex + config.toml OTel)
-- 세션 스폰 UX (worktree 이름/프리셋 선택)
+### Phase 2 — 프로바이더 그룹 · 활동 · 맵 (poc 에서 진행 중)
+- [ ] 프로바이더 그룹 대시보드: Claude/Codex/Gemini/Cursor/Antigravity 그룹 헤더
+      (설치 여부·플랜·사용량 게이지) + 그룹 내 세션 카드
+- [ ] 세션 활동 가시화 (통증 3): PreToolUse/PostToolUse/SubagentStop 훅(문서화 표면)으로
+      실행 중 스킬·툴·MCP·서브에이전트 + 소요시간 표시 — OTel 없이 해결
+- [ ] 프로바이더 어댑터: codex/gemini/cursor/antigravity detect()+backfill (전부 격리)
+- [ ] 인터랙티브 오케스트레이션 맵: 노드(프로바이더·MCP 툴·노트)+엣지(MCP 연결) 편집기,
+      저장/불러오기, MCP 카탈로그(obsidian·github·filesystem…), .mcp.json 내보내기
+      ※ 맵은 블루프린트+설정 생성기. 실제 크로스 에이전트 실행은 Phase 4
+- [ ] `sauron app`: Chromium --app 데스크톱 창 (BridgeSpace/cc-switch 스타일)
+- OTel receiver / 웹 DAG 트리 → Phase 3 로 이동 (훅 기반으로 대체됨)
 
 ### Phase 3 — qa/prod (제품화 실험)
 - AI Refrigerator 프리셋 연동 (적용된 프리셋을 세션 행에 표시)
