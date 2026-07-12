@@ -1,0 +1,26 @@
+name: Release
+on:
+  push:
+    branches: [prod]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test
+      - name: Read version
+        id: v
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.v.outputs.version }}"
+          git tag "$tag" || true
+          git push origin "$tag" || true
+          gh release create "$tag" --generate-notes --title "Sauron Eye $tag" || echo "release exists"

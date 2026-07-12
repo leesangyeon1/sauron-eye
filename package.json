@@ -1,0 +1,14 @@
+{
+  "name": "sauron-eye",
+  "version": "0.1.0",
+  "description": "One eye over all your AI coding sessions — live state, model, cost, quota for Claude Code (and friends)",
+  "type": "module",
+  "bin": { "sauron": "bin/sauron.js" },
+  "scripts": {
+    "start": "node bin/sauron.js start",
+    "tui": "node bin/sauron.js tui",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=22.5" },
+  "license": "MIT"
+}
