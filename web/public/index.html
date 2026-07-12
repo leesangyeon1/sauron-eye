@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sauron Eye</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d; --fg: #c9d1d9; --dim: #8b949e;
+    --green: #3fb950; --amber: #d29922; --red: #f85149; --blue: #58a6ff; --grey: #6e7681;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f8fa; --card: #ffffff; --border: #d0d7de; --fg: #1f2328; --dim: #656d76; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
+    background: var(--bg); z-index: 1; }
+  header h1 { font-size: 16px; margin: 0; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); flex: none; }
+  #dot.open { background: var(--green); }
+  #quota { display: flex; gap: 16px; margin-left: auto; flex-wrap: wrap; }
+  .gauge { min-width: 190px; }
+  .gauge .lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); }
+  .gauge .track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 2px; }
+  .gauge .fill { height: 100%; border-radius: 3px; transition: width .4s; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; }
+  .card.ended { opacity: .55; }
+  .card .top { display: flex; align-items: center; gap: 8px; }
+  .badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+    padding: 2px 7px; border-radius: 10px; color: #fff; flex: none; }
+  .badge.working { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+  .badge.idle { background: var(--blue); }
+  .badge.needs_input { background: var(--amber); animation: blink 1s step-start infinite; }
+  .badge.stale { background: var(--grey); }
+  .badge.ended { background: var(--grey); opacity: .6; }
+  @keyframes pulse { 50% { opacity: .55; } }
+  @keyframes blink { 50% { opacity: .3; } }
+  .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px;
+    font-size: 12px; color: var(--dim); }
+  .ctx { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+  .ctx div { height: 100%; }
+  .where { margin-top: 6px; font-size: 12px; color: var(--dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #empty { padding: 48px 16px; text-align: center; color: var(--dim); }
+  details { padding: 0 16px 16px; }
+  summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+  details #hgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px; margin-top: 12px; }
+</style>
+
+<header>
+  <h1>👁️ Sauron Eye</h1>
+  <div id="dot" title="SSE"></div>
+  <div id="quota"></div>
+</header>
+<div id="empty" hidden>세션 없음 — Claude Code 세션을 열면 여기 나타납니다. (sauron install 을 실행했는지 확인)</div>
+<div id="grid"></div>
+<details id="history" hidden><summary>History</summary><div id="hgrid"></div></details>
+
+<script>
+const sessions = new Map();
+let quota = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const rampColor = p => p > 85 ? 'var(--red)' : p > 60 ? 'var(--amber)' : 'var(--green)';
+
+function rel(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+function countdown(iso) {
+  if (!iso) return '';
+  const ms = new Date(iso) - Date.now();
+  if (isNaN(ms)) return '';
+  if (ms <= 0) return 'resets soon';
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60);
+  if (h >= 24) return `resets in ${Math.floor(h / 24)}d ${h % 24}h`;
+  return h ? `resets in ${h}h ${m % 60}m` : `resets in ${m}m`;
+}
+
+function renderQuota() {
+  const p = quota && (quota.claude || Object.values(quota)[0]);
+  if (!p) { $('quota').innerHTML = ''; return; }
+  $('quota').innerHTML = [['5h', p.rate5h], ['7d', p.rate7d]].map(([label, r]) => {
+    if (!r) return '';
+    const pct = Math.min(100, r.usedPct ?? r.used_pct ?? 0);
+    return `<div class="gauge">
+      <div class="lbl"><span>${label} <span class="num">${pct}%</span></span><span>${esc(countdown(r.resetsAt ?? r.resets_at))}</span></div>
+      <div class="track"><div class="fill" style="width:${pct}%;background:${rampColor(pct)}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+const STATE_ORDER = { needs_input: 0, working: 1, idle: 2, stale: 3, ended: 4 };
+
+function card(s) {
+  const name = s.name || (s.sessionId || '').slice(0, 8);
+  const cost = s.costUsd != null ? '$' + Number(s.costUsd).toFixed(2) : '';
+  const ctx = s.contextPct != null ? Math.min(100, s.contextPct) : null;
+  const dir = s.cwd ? s.cwd.split('/').filter(Boolean).pop() : '';
+  const where = dir + (s.gitBranch ? ' ⎇ ' + s.gitBranch : '');
+  return `<div class="card ${s.state === 'ended' ? 'ended' : ''}">
+    <div class="top"><span class="badge ${esc(s.state || 'stale')}">${esc(s.state || '?')}</span>
+      <span class="name" title="${esc(s.sessionId || '')}">${esc(name)}</span></div>
+    <div class="meta"><span>${esc(s.model || '')}</span><span class="num">${cost}</span></div>
+    ${ctx != null ? `<div class="meta"><span>context</span><span class="num">${ctx}%</span></div>
+      <div class="ctx"><div style="width:${ctx}%;background:${rampColor(ctx)}"></div></div>` : ''}
+    <div class="where">${esc(where)}</div>
+    <div class="meta"><span></span><span class="num">${rel(s.lastSeen)}</span></div>
+  </div>`;
+}
+
+function render() {
+  const all = [...sessions.values()].sort((a, b) =>
+    (STATE_ORDER[a.state] ?? 3) - (STATE_ORDER[b.state] ?? 3) || (b.lastSeen || 0) - (a.lastSeen || 0));
+  const live = all.filter(s => s.state !== 'ended' && s.source !== 'history');
+  const hist = all.filter(s => s.state === 'ended' || s.source === 'history');
+  $('grid').innerHTML = live.map(card).join('');
+  $('hgrid').innerHTML = hist.map(card).join('');
+  $('empty').hidden = all.length > 0;
+  $('history').hidden = hist.length === 0;
+  renderQuota();
+}
+
+// ponytail: full innerHTML re-render each event; fine for ~20 cards, diff DOM if hundreds.
+function upsert(s) {
+  if (!s || !s.sessionId) return;
+  const prev = sessions.get(s.sessionId);
+  // SSE events carry name:null (adapter decorates REST responses only) — keep a known name
+  sessions.set(s.sessionId, { ...prev, ...s, name: s.name ?? prev?.name ?? null });
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/sessions?include=history');
+    (await r.json()).sessions?.forEach(upsert);
+  } catch {}
+  try {
+    const r = await fetch('/api/quota');
+    quota = (await r.json()).providers || null;
+  } catch {}
+  render();
+}
+
+const BACKOFF = [2000, 5000, 10000];
+let attempt = 0, es = null;
+
+function connect() {
+  es = new EventSource('/api/events');
+  es.onopen = () => { attempt = 0; $('dot').classList.add('open'); load(); };
+  es.onerror = () => {
+    es.close();
+    $('dot').classList.remove('open');
+    setTimeout(connect, BACKOFF[Math.min(attempt++, BACKOFF.length - 1)]);
+  };
+  es.addEventListener('session', e => {
+    try { upsert(JSON.parse(e.data)); render(); } catch {}
+  });
+  es.addEventListener('quota', e => {
+    try { const d = JSON.parse(e.data); quota = d.providers || d; renderQuota(); } catch {}
+  });
+}
+
+load();
+connect();
+setInterval(render, 5000); // tick relative times + countdowns
+</script>
