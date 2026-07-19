@@ -5,7 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createRegistry } from './registry.js';
+import { createWorktreeManager } from './worktree.js';
 import { MCP_CATALOG } from './mcp-catalog.js';
+import * as tmuxSurface from '../surfaces/tmux.js';
 
 const readFileP = promisify(readFile);
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web/public');
@@ -53,10 +55,12 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
-export async function startServer({ port, dbPath } = {}) {
+export async function startServer({ port, dbPath, worktreeRoot } = {}) {
   port ??= Number(process.env.SAURON_PORT) || 4870;
   const store = openStore(dbPath ?? process.env.SAURON_DB);
   const registry = createRegistry(store);
+  // surface passed unconditionally: launch() degrades to { ok:false, hint } when tmux is absent
+  const worktrees = createWorktreeManager(store, registry, { root: worktreeRoot, surface: tmuxSurface });
   const sseClients = new Set();
   const nameCache = new Map(); // ponytail: caches nulls forever too; restart to pick up late names
 
@@ -132,7 +136,36 @@ export async function startServer({ port, dbPath } = {}) {
         return json(res, 200, { ok: true });
       }
 
+      if (req.method === 'POST' && (rawPath === '/api/worktree/create' || rawPath === '/api/worktree/gc')) {
+        const body = await readBody(req);
+        if (body === null) return json(res, 413, { ok: false, error: 'body too large' });
+        let payload;
+        try { payload = JSON.parse(body || '{}'); } catch { return json(res, 400, { ok: false, error: 'invalid json' }); }
+        if (rawPath === '/api/worktree/gc') {
+          return json(res, 200, await worktrees.gc({ dryRun: payload.dryRun !== false }));
+        }
+        const r = await worktrees.create({
+          repoPath: payload.repoPath, branch: payload.branch, baseBranch: payload.baseBranch,
+          presetId: payload.presetId, launch: payload.launch !== false, paneTarget: payload.paneTarget,
+        });
+        return json(res, r.ok ? 200 : 400, r);
+      }
+
+      if (req.method === 'DELETE' && rawPath.startsWith('/api/worktree/')) {
+        const id = decodeURIComponent(rawPath.slice('/api/worktree/'.length));
+        const body = await readBody(req);
+        if (body === null) return json(res, 413, { ok: false, error: 'body too large' });
+        let payload = {};
+        try { payload = JSON.parse(body || '{}'); } catch { /* lenient: no body = no force */ }
+        const r = await worktrees.remove(id, { force: payload.force === true });
+        return json(res, r.ok ? 200 : 400, r);
+      }
+
       if (req.method !== 'GET') return json(res, 404, { ok: false, error: 'not found' });
+
+      if (rawPath === '/api/worktree/list') {
+        return json(res, 200, { worktrees: worktrees.list() });
+      }
 
       if (rawPath === '/api/groups') {
         const providers = await detectProviders();
@@ -194,9 +227,11 @@ export async function startServer({ port, dbPath } = {}) {
         };
         for (const s of registry.sessions()) send('session', s); // snapshot replay
         send('quota', registry.quota());
+        for (const w of worktrees.list()) send('worktree', w);
         const unsub = registry.subscribe(({ type, data }) => send(type, data));
+        const unsubWt = worktrees.subscribe((w) => send('worktree', w));
         sseClients.add(res);
-        req.on('close', () => { unsub(); sseClients.delete(res); });
+        req.on('close', () => { unsub(); unsubWt(); sseClients.delete(res); });
         return;
       }
 

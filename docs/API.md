@@ -153,3 +153,69 @@ export async function backfillSessions() // → [{sessionId, provider, name?, cw
 
 ## bin 추가
 `sauron app` — 데몬 헬스 확인(다운이면 detached 스폰) 후 Chromium 계열 `--app=http://127.0.0.1:4870` 창. 없으면 기본 브라우저.
+
+---
+
+# Phase 2 확장 (worktree 격리 + spawn — ultimate-system/docs/WORKTREE.md 가 설계 원본)
+
+## POST /api/worktree/create
+```json
+{ "repoPath": "/abs/path", "branch": "feat/x", "baseBranch": "main",
+  "presetId": "backend-api", "launch": true, "paneTarget": "%5" }
+```
+repoPath 만 필수. branch 기본값 `sauron/<repo-slug>-<yyyymmdd-HHmmss>`.
+같은 branch 재호출 = 기존 worktree 반환(`reused:true`), 새로 안 만듦.
+```json
+{ "ok": true, "reused": false, "id": "uuid", "worktreePath": "...", "branch": "...",
+  "baseBranch": "main", "command": "cd '...' && claude",
+  "surface": { "ok": true, "note": "tmux session ...", "hint": "tmux attach -t ..." },
+  "warnings": ["preset \"x\" skipped — AI-Refrigerator not running ..."] }
+```
+- 프리셋: AI-Refrigerator `POST :4924/api/apply` (mode=project). 소프트 디펜던시 —
+  다운이면 warnings 로만.
+- surface: `surfaces/tmux.js` (계약: throw 금지, 실패 시 `{ok:false,hint}`).
+  paneTarget 있으면 그 pane split, 없으면 detached 세션 + attach 힌트.
+  실패해도 create 는 성공 — `command` 로 수동 실행.
+
+## GET /api/worktree/list
+```json
+{ "worktrees": [ { "id": "...", "repoPath": "...", "branch": "...", "worktreePath": "...",
+  "status": "provisioning|active|pending-cleanup|clean|dirty",
+  "sessionId": "...", "presetId": "...", "createdAt": 0, "endedAt": null,
+  "session": { "state": "working", "model": "Sonnet 5", "costUsd": 1.2 } } ] }
+```
+removed 는 제외. session 은 registry 라이브 조인(없으면 null).
+
+## POST /api/worktree/gc
+`{ "dryRun": true }` (기본 true — false 를 명시해야 실삭제)
+```json
+{ "clean": [...], "dirty": [{..., "uncommitted": true, "unmerged": false}],
+  "removed": [...], "missing": [...], "errors": [{"id","branch","error"}] }
+```
+규칙: dirty(미커밋 또는 미머지)는 **절대 삭제 안 함**, 매 실행마다 재검사만.
+clean 삭제는 `git worktree remove`(--force 금지) + `git branch -d`(-D 금지).
+- 고아 active(링크된 세션이 stale/ended/실종 — session_end 못 받은 죽음): pending-cleanup 으로
+  강등 후 정상 처리. 살아있는 세션의 active 는 절대 안 건드림 (await 후 재확인, TOCTOU 방지).
+- missing(디렉토리 사라짐): tombstone + `git worktree prune` — 브랜치 점유 해제, 재spawn 가능.
+- merged 판정은 `merge-base --is-ancestor refs/heads/<branch> <base>` — exit 1 만 "미머지",
+  그 외(base 삭제 등)는 errors 로 분리 (dirty 오분류 금지).
+
+## DELETE /api/worktree/:ref
+ref = id 또는 worktree 경로. body `{ "force": false }`.
+active(세션 살아있음) → 400. dirty + force=false → 400.
+force=true 는 사람이 명시한 유일한 --force 경로 — 브랜치는 항상 남김.
+
+## SSE 추가
+`event: worktree  data: {worktree 객체}` — 상태 전이마다. 연결 직후 스냅샷 재생.
+
+## 세션 연결 (registry 무변경)
+worktree.js 가 registry.subscribe 로 올라탐: cwd(realpath) == worktreePath 인 세션 이벤트 →
+`active` + sessionId 링크. `ended` → `pending-cleanup`. 재시작 시 디렉토리 사라진 행은
+removed 톰스톤 (git 이 진실, DB 는 캐시).
+
+## bin 추가 (Phase 2)
+```
+sauron spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux] [--no-launch]
+sauron worktree ls | gc [--force] | rm <id|path> [--force]
+```
+spawn 은 $TMUX_PANE 을 paneTarget 으로 전달 — tmux 안에서 실행하면 제자리 split.

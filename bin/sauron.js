@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import { resolve } from 'node:path';
 
 const cmd = process.argv[2];
 const port = Number(process.env.SAURON_PORT) || 4870;
@@ -9,6 +11,21 @@ const missing = (what) => {
   console.error(`${what} is not built yet in this checkout.`);
   process.exit(1);
 };
+
+// daemon HTTP helper: connection failure = daemon down, one clear message
+async function api(method, path, body) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return await r.json();
+  } catch {
+    console.error(`sauron not running on 127.0.0.1:${port} — run \`sauron start\` first`);
+    process.exit(1);
+  }
+}
 
 // ponytail: best-effort browser launch, ordered by likelihood; URL always printed as fallback
 function openAppWindow(url) {
@@ -73,6 +90,87 @@ switch (cmd) {
     else await mod.uninstall();
     break;
   }
+  case 'spawn': {
+    const { values, positionals } = parseArgs({
+      args: process.argv.slice(3),
+      allowPositionals: true,
+      options: {
+        branch: { type: 'string' },
+        base: { type: 'string' },
+        preset: { type: 'string' },
+        via: { type: 'string' },
+        'no-launch': { type: 'boolean' },
+      },
+    });
+    if (values.via && values.via !== 'tmux') {
+      console.error(`unknown surface "${values.via}" — Phase 2 supports: tmux`);
+      process.exit(1);
+    }
+    const r = await api('POST', '/api/worktree/create', {
+      repoPath: resolve(positionals[0] ?? '.'),
+      branch: values.branch,
+      baseBranch: values.base,
+      presetId: values.preset,
+      launch: !values['no-launch'],
+      paneTarget: process.env.TMUX_PANE, // present iff spawn ran inside tmux → split in place
+    });
+    if (!r.ok) {
+      console.error(`spawn failed: ${r.error}`);
+      process.exit(1);
+    }
+    console.log(`worktree: ${r.worktreePath}${r.reused ? ' (reused)' : ''}`);
+    console.log(`branch:   ${r.branch} (base ${r.baseBranch})`);
+    for (const w of r.warnings ?? []) console.log(`warning:  ${w}`);
+    if (r.surface?.ok) console.log(`surface:  ${r.surface.note}${r.surface.hint ? ` — ${r.surface.hint}` : ''}`);
+    else console.log(`run:      ${r.command}${r.surface?.hint ? `  (tmux: ${r.surface.hint})` : ''}`);
+    break;
+  }
+  case 'worktree': {
+    const sub = process.argv[3];
+    if (sub === 'ls') {
+      const r = await api('GET', '/api/worktree/list');
+      if (r.error) { console.error(r.error); process.exit(1); }
+      const { worktrees } = r;
+      if (!worktrees?.length) { console.log('no worktrees'); break; }
+      for (const w of worktrees) {
+        const sess = w.session?.state ?? (w.sessionId ? 'ended' : '-');
+        console.log(`${w.status.padEnd(16)} ${sess.padEnd(12)} ${w.branch.padEnd(32)} ${w.worktreePath}`);
+      }
+      break;
+    }
+    if (sub === 'gc') {
+      const force = process.argv.includes('--force');
+      const rep = await api('POST', '/api/worktree/gc', { dryRun: !force });
+      if (rep.error) { console.error(rep.error); process.exit(1); } // daemon 500 must not read as "nothing pending"
+      const line = (w) => `  ${w.branch} — ${w.worktreePath}`;
+      if (rep.removed?.length) { console.log('removed:'); rep.removed.forEach((w) => console.log(line(w))); }
+      if (rep.clean?.length) {
+        console.log(force ? 'clean:' : 'clean (would remove — rerun with --force):');
+        rep.clean.forEach((w) => console.log(line(w)));
+      }
+      if (rep.dirty?.length) {
+        console.log('dirty (kept — commit/merge first):');
+        rep.dirty.forEach((w) => console.log(`${line(w)}${w.uncommitted ? ' [uncommitted]' : ''}${w.unmerged ? ' [unmerged]' : ''}`));
+      }
+      if (rep.missing?.length) { console.log('missing (directory gone, tombstoned):'); rep.missing.forEach((w) => console.log(line(w))); }
+      if (rep.errors?.length) { console.log('errors:'); rep.errors.forEach((e) => console.log(`  ${e.branch ?? e.id}: ${e.error}`)); }
+      if (!['removed', 'clean', 'dirty', 'missing', 'errors'].some((k) => rep[k]?.length)) console.log('nothing pending');
+      break;
+    }
+    if (sub === 'rm') {
+      const raw = process.argv[4];
+      if (!raw || raw.startsWith('--')) { console.error('usage: sauron worktree rm <id|path> [--force]'); process.exit(1); }
+      // path-looking refs resolve against the CLI's cwd, not the daemon's
+      const ref = raw.includes('/') || raw.startsWith('.') ? resolve(raw) : raw;
+      const r = await api('DELETE', `/api/worktree/${encodeURIComponent(ref)}`, { force: process.argv.includes('--force') });
+      if (!r.ok) { console.error(r.error); process.exit(1); }
+      console.log(`removed${r.note ? ` — ${r.note}` : ''}`);
+      break;
+    }
+    console.log('usage: sauron worktree <ls|gc [--force]|rm <id|path> [--force]>');
+    process.exit(sub ? 1 : 0);
+    break;
+  }
   case 'status': {
     try {
       const r = await fetch(`http://127.0.0.1:${port}/api/health`);
@@ -86,6 +184,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`usage: sauron <start|app|tui|install [--dry-run]|uninstall|status>`);
+    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux] [--no-launch]|worktree <ls|gc|rm>|install [--dry-run]|uninstall|status>`);
     process.exit(cmd ? 1 : 0);
 }
