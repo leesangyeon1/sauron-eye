@@ -266,6 +266,29 @@ sauron swarm adopt <winner-worktree-id>
 Worktrees 탭 상단에 swarm 카드 — 멤버별 상태/세션/[diff]/[👑 채택].
 diff 모달: +/-/hunk 컬러, stat + untracked + truncated 표시.
 
+## Phase 6 — cron 자동화 + map 실행 연결
+
+### sauron cron (데몬 API 아님 — 사용자 crontab 관리)
+```
+sauron cron add "0 3 * * *" -- spawn ~/projects/x --preset token-saver --prompt "deps 업데이트"
+sauron cron ls
+sauron cron rm <id>
+```
+- 우리 라인만 `# sauron:<id>` 태그로 관리 — 사용자의 기존 crontab 라인은 바이트 동일 보존.
+- 스케줄 검증(5필드 또는 @daily 류), 인자 전부 sh 단일인용 + `%` 이스케이프(crontab 개행 규칙).
+- 등록되는 커맨드는 `spawn` 만 허용, `--ensure-daemon` 자동 부착 — 새벽에 데몬 없으면
+  spawn 이 detached 로 띄우고 5s 헬스 대기 후 진행. 로그: `~/.sauron/cron.log`.
+
+### map → spawn (web)
+Map 탭에서 provider 노드 선택 시 `🌱 spawn` 버튼 — 노드 `meta.repo` (첫 실행 때 물어보고
+맵 문서에 저장) 로 `/api/worktree/create` 호출. 오케스트레이션 블루프린트에서 바로 실행.
+
+### superset — 통합 제외 결정 (조사 결과)
+`superset workspaces create --project prj_… --branch … --local` — superset 은 자체 프로젝트
+등록 + **자체 worktree** 를 만들며, "지정 cwd 에서 커맨드 실행" CLI 가 없다 (tmux/cmux 와 달리
+표면이 아님). 어댑터로 잇으면 이중 worktree. 우리 격리 레이어와 **대체재 관계** — 통합 대신
+필요 기능(swarm diff/adopt=Phase 5, automations=Phase 6 cron)을 자체 구현으로 흡수 완료.
+
 ## Phase 4 — surfaces/cmux + 알림
 - `surfaces/cmux.js`: `cmux --json new-workspace --cwd <p> --command <c> [--description <t>]`
   (문법 출처: manaflow-ai/cmux docs/cli-contract.md). detect() 는 binary(`--version`)와

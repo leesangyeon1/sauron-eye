@@ -265,6 +265,7 @@
     <div id="mapbar">
       <button class="btn" id="msave">저장 <span id="mdirty" hidden>●</span></button>
       <button class="btn" id="mexport">내보내기</button>
+      <button class="btn" id="mspawn" hidden>🌱 spawn</button>
       <span class="hint">팔레트 클릭→캔버스 배치 · 드래그 이동 · ○드래그 연결 · dblclick 이름 · Space/휠 팬·줌 · ⌫ 삭제 · ⌘S 저장</span>
     </div>
     <svg id="msvg">
@@ -810,6 +811,24 @@ function renderWorld() {
     </g>`;
   }).join('');
   $('mempty').hidden = map.doc.nodes.length > 0;
+  // map 실행엔진 연결 (Phase 6): provider 노드 선택 시 바로 spawn
+  $('mspawn').hidden = !(map.sel?.type === 'node' && nodeById(map.sel.id)?.type === 'provider');
+}
+
+async function spawnFromMap() {
+  const n = map.sel?.type === 'node' ? nodeById(map.sel.id) : null;
+  if (!n || n.type !== 'provider') return;
+  const repo = (n.meta.repo || '') || prompt('repo 경로 (노드에 저장됩니다):', '~/projects/');
+  if (!repo || !repo.trim()) return;
+  if (n.meta.repo !== repo.trim()) { n.meta.repo = repo.trim(); markDirty(); }
+  try {
+    const r = await (await fetch('/api/worktree/create', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ repoPath: n.meta.repo }),
+    })).json();
+    if (!r.ok) { toast('spawn 실패: ' + (r.error ?? '?')); if (/not a git repo/.test(r.error ?? '')) { delete n.meta.repo; markDirty(); } return; }
+    toast(`spawned ${r.branch} · #worktrees 탭에서 확인`);
+  } catch { toast('spawn 실패 — 데몬 연결 안 됨'); }
 }
 
 function seed() {
@@ -1071,6 +1090,7 @@ async function openExport() {
   $('modal').hidden = false;
 }
 $('mexport').addEventListener('click', openExport);
+$('mspawn').addEventListener('click', spawnFromMap);
 $('msave').addEventListener('click', saveMap);
 $('mxclose').addEventListener('click', () => { $('modal').hidden = true; });
 $('modal').addEventListener('click', e => { if (e.target === $('modal')) $('modal').hidden = true; });

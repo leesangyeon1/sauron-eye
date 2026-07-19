@@ -27,6 +27,25 @@ async function api(method, path, body) {
   }
 }
 
+async function daemonAlive() {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(500) });
+    return (await r.json())?.ok === true;
+  } catch { return false; }
+}
+
+// boot a detached daemon and wait for health — used by `app` and by cron-driven spawns
+async function ensureDaemon() {
+  if (await daemonAlive()) return true;
+  spawn(process.execPath, [fileURLToPath(import.meta.url), 'start'], { detached: true, stdio: 'ignore' }).unref();
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (await daemonAlive()) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
+
 // ponytail: best-effort browser launch, ordered by likelihood; URL always printed as fallback
 function openAppWindow(url) {
   const ok = (r) => !r.error && r.status === 0;
@@ -61,17 +80,7 @@ switch (cmd) {
   }
   case 'app': {
     const url = `http://127.0.0.1:${port}`;
-    const alive = async () => {
-      try {
-        const r = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(500) });
-        return (await r.json())?.ok === true;
-      } catch { return false; }
-    };
-    if (!(await alive())) {
-      spawn(process.execPath, [fileURLToPath(import.meta.url), 'start'], { detached: true, stdio: 'ignore' }).unref();
-      const deadline = Date.now() + 3000;
-      while (Date.now() < deadline && !(await alive())) await new Promise((r) => setTimeout(r, 200));
-    }
+    await ensureDaemon();
     openAppWindow(url);
     console.log(`sauron app: ${url}`);
     break;
@@ -104,6 +113,7 @@ switch (cmd) {
           swarm: { type: 'string' },
           prompt: { type: 'string' },
           'no-launch': { type: 'boolean' },
+          'ensure-daemon': { type: 'boolean' }, // cron-driven spawns boot the daemon themselves
         },
       });
     } catch (err) {
@@ -113,6 +123,10 @@ switch (cmd) {
     const { values, positionals } = parsed;
     if (values.via && !['tmux', 'cmux'].includes(values.via)) {
       console.error(`unknown surface "${values.via}" — supported: tmux, cmux`);
+      process.exit(1);
+    }
+    if (values['ensure-daemon'] && !(await ensureDaemon())) {
+      console.error('daemon failed to start within 5s');
       process.exit(1);
     }
     const common = {
@@ -233,6 +247,36 @@ switch (cmd) {
     process.exit(sub ? 1 : 0);
     break;
   }
+  case 'cron': {
+    const { createCron } = await import('../core/cron.js');
+    const cron = createCron({ binPath: fileURLToPath(import.meta.url) });
+    const sub = process.argv[3];
+    if (sub === 'add') {
+      const schedule = process.argv[4];
+      const sep = process.argv.indexOf('--');
+      const args = sep >= 0 ? process.argv.slice(sep + 1) : [];
+      const r = await cron.add({ schedule, args });
+      if (!r.ok) { console.error(r.error); process.exit(1); }
+      console.log(`cron ${r.id} added:`);
+      console.log(`  ${r.line}`);
+      break;
+    }
+    if (sub === 'ls') {
+      const { jobs } = await cron.ls();
+      if (!jobs.length) { console.log('no sauron cron jobs'); break; }
+      for (const j of jobs) console.log(`${j.id}  ${j.line}`);
+      break;
+    }
+    if (sub === 'rm') {
+      const r = await cron.rm(process.argv[4] ?? '');
+      if (!r.ok) { console.error(r.error); process.exit(1); }
+      console.log(`removed ${r.removed}`);
+      break;
+    }
+    console.log('usage: sauron cron <add "<schedule>" -- spawn <repo> [flags…]|ls|rm <id>>');
+    process.exit(sub ? 1 : 0);
+    break;
+  }
   case 'status': {
     try {
       const r = await fetch(`http://127.0.0.1:${port}/api/health`);
@@ -246,6 +290,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux|cmux] [--swarm N --prompt "task"] [--no-launch]|swarm <ls|adopt <id>>|worktree <ls|gc|rm>|install [--dry-run]|uninstall|status>`);
+    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux|cmux] [--swarm N --prompt "task"] [--no-launch]|swarm <ls|adopt <id>>|worktree <ls|gc|rm>|cron <add|ls|rm>|install [--dry-run]|uninstall|status>`);
     process.exit(cmd ? 1 : 0);
 }
