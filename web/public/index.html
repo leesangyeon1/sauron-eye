@@ -613,6 +613,11 @@ async function spawnWt() {
 }
 
 // ---------- swarm compare / diff / adopt ----------
+let swarmT = null;
+function loadSwarmsSoon() { // coalesce SSE bursts into one fetch
+  if (swarmT || tab !== 'worktrees') return;
+  swarmT = setTimeout(() => { swarmT = null; loadSwarms(); }, 500);
+}
 async function loadSwarms() {
   let swarms = [];
   try { swarms = (await (await fetch('/api/swarm/list')).json()).swarms ?? []; } catch {}
@@ -712,10 +717,10 @@ function connect() {
     setTimeout(connect, BACKOFF[Math.min(attempt++, BACKOFF.length - 1)]);
   };
   es.addEventListener('session', e => {
-    try { upsert(JSON.parse(e.data)); renderSessions(); renderPanel(); renderWorktrees(); } catch {}
+    try { upsert(JSON.parse(e.data)); renderSessions(); renderPanel(); renderWorktrees(); loadSwarmsSoon(); } catch {}
   });
   es.addEventListener('worktree', e => {
-    try { wtUpsert(JSON.parse(e.data)); renderWorktrees(); } catch {}
+    try { wtUpsert(JSON.parse(e.data)); renderWorktrees(); loadSwarmsSoon(); } catch {}
   });
   es.addEventListener('quota', e => { // live usage nudges between 60s group refetches
     try {
@@ -1104,6 +1109,6 @@ route();
 loadGroups();
 connect();
 setInterval(loadGroups, 60_000);            // detect()/usage refresh
-setInterval(() => { renderSessions(); renderPanel(); renderWorktrees(); }, 5000); // ponytail: 5s tick — chip durations jump 5s, fine
+setInterval(() => { renderSessions(); renderPanel(); renderWorktrees(); loadSwarmsSoon(); }, 5000); // ponytail: 5s tick — chip durations jump 5s, fine
 </script>
 </html>

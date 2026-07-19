@@ -136,6 +136,105 @@ test('adopt guards: dirty winner, wrong checkout, merge conflict', async (t) => 
   assert.equal((await mgr.adopt({ winnerId: 'nope' })).ok, false);
 });
 
+test('re-swarm on the same branch name refuses — discarded loser code must never resurrect', async (t) => {
+  const repo = makeRepo(t);
+  const { mgr } = makeManager(t);
+  const r1 = await mgr.swarm({ repoPath: repo, count: 2, prompt: 'X', branch: 'try/re', launch: false });
+  commit(r1.members[0].worktreePath, 'w.txt', 'winner');
+  commit(r1.members[1].worktreePath, 'loser.txt', 'discarded');
+  assert.equal((await mgr.adopt({ winnerId: r1.members[0].id })).ok, true);
+
+  // try/re-b branch still exists (kept by design) at its discarded tip
+  const r2 = await mgr.swarm({ repoPath: repo, count: 2, prompt: 'Y', branch: 'try/re', launch: false });
+  assert.equal(r2.ok, false);
+  assert.ok(r2.members.some((m) => !m.ok && /already exists/.test(m.error)));
+  // and nothing silently checked out the old loser branch
+  for (const m of r2.members) if (m.ok) {
+    assert.ok(!existsSync(join(m.worktreePath, 'loser.txt')), 'discarded code resurrected!');
+  }
+
+  // default-named swarms in the same second don't collide (random tail)
+  const a = await mgr.swarm({ repoPath: repo, count: 2, prompt: 'p', launch: false });
+  const b = await mgr.swarm({ repoPath: repo, count: 2, prompt: 'p', launch: false });
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, true);
+  assert.notEqual(a.members[0].branch, b.members[0].branch);
+});
+
+test('adopt skips losers whose session has not ENDED (stale may be a long tool call)', async (t) => {
+  const repo = makeRepo(t);
+  const { mgr, registry } = makeManager(t);
+  const r = await mgr.swarm({ repoPath: repo, count: 3, prompt: 'task', branch: 'try/live', launch: false });
+  const [a, b, c] = r.members;
+  commit(a.worktreePath, 'w.txt', 'w');
+  registry.ingestHook({ sessionId: 'busy', event: 'session_start', cwd: b.worktreePath });
+  writeFileSync(join(b.worktreePath, 'wip.txt'), 'uncommitted work in progress');
+
+  const ad = await mgr.adopt({ winnerId: a.id });
+  assert.equal(ad.ok, true, ad.error);
+  assert.equal(ad.losersRemoved.length, 1); // only c (never linked)
+  assert.equal(ad.losersSkipped.length, 1);
+  assert.match(ad.losersSkipped[0].error, /session working/);
+  assert.ok(existsSync(b.worktreePath)); // live session's dir untouched
+  assert.ok(!existsSync(c.worktreePath));
+});
+
+test('diff stays scoped to the member after base moves (merge-base, not base tip)', async (t) => {
+  const repo = makeRepo(t);
+  const { mgr } = makeManager(t);
+  const r = await mgr.create({ repoPath: repo, branch: 'feat/mb', launch: false });
+  commit(repo, 'main-moved.txt', 'after-branching'); // base advances after member branched
+
+  const d = await mgr.diff(r.id);
+  assert.equal(d.ok, true);
+  assert.equal(d.diff, ''); // member changed nothing — base's new commit must NOT appear reversed
+  commit(r.worktreePath, 'mine.txt', 'member work');
+  const d2 = await mgr.diff(r.id);
+  assert.match(d2.diff, /\+member work/);
+  assert.ok(!/main-moved/.test(d2.diff));
+});
+
+test('adopt is re-runnable: alreadyMerged skips the merge, retries loser cleanup', async (t) => {
+  const repo = makeRepo(t);
+  const { mgr, registry } = makeManager(t);
+  const r = await mgr.swarm({ repoPath: repo, count: 2, prompt: 'task', branch: 'try/rr', launch: false });
+  const [a, b] = r.members;
+  commit(a.worktreePath, 'w.txt', 'w');
+  registry.ingestHook({ sessionId: 'hold', event: 'session_start', cwd: b.worktreePath });
+
+  const first = await mgr.adopt({ winnerId: a.id });
+  assert.equal(first.ok, true);
+  assert.equal(first.alreadyMerged, false);
+  assert.equal(first.losersSkipped.length, 1); // b held by live session
+
+  registry.ingestHook({ sessionId: 'hold', event: 'session_end' });
+  const second = await mgr.adopt({ winnerId: a.id });
+  assert.equal(second.ok, true);
+  assert.equal(second.alreadyMerged, true); // no second merge commit
+  assert.equal(second.losersRemoved.length, 1); // cleanup finally lands
+  assert.equal(g(repo, 'rev-list', '--count', 'main'), '3'); // init + winner commit + ONE merge
+});
+
+test('adopt guards: worktree HEAD off-branch, unfinished merge in repo', async (t) => {
+  const repo = makeRepo(t);
+  const { mgr } = makeManager(t);
+  const r = await mgr.swarm({ repoPath: repo, count: 2, prompt: 'task', branch: 'try/hd', launch: false });
+  const [a] = r.members;
+  commit(a.worktreePath, 'w.txt', 'w');
+
+  g(a.worktreePath, 'checkout', '-b', 'side'); // agent wandered off the member branch
+  assert.match((await mgr.adopt({ winnerId: a.id })).error, /instead of try\/hd-a/);
+  g(a.worktreePath, 'checkout', 'try/hd-a');
+
+  // unfinished merge sitting in the primary checkout → refuse before touching anything
+  g(repo, 'checkout', '-b', 'tmp');
+  commit(repo, 'tmp.txt', 't');
+  g(repo, 'checkout', 'main');
+  g(repo, 'merge', '--no-commit', '--no-ff', 'tmp');
+  assert.match((await mgr.adopt({ winnerId: a.id })).error, /unfinished merge/);
+  g(repo, 'merge', '--abort');
+});
+
 test('http swarm endpoints', async (t) => {
   const repo = makeRepo(t);
   const db = join(tmpdir(), `sauron-sw-http-${process.pid}.db`);

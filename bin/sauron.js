@@ -91,19 +91,26 @@ switch (cmd) {
     break;
   }
   case 'spawn': {
-    const { values, positionals } = parseArgs({
-      args: process.argv.slice(3),
-      allowPositionals: true,
-      options: {
+    let parsed;
+    try {
+      parsed = parseArgs({
+        args: process.argv.slice(3),
+        allowPositionals: true,
+        options: {
         branch: { type: 'string' },
         base: { type: 'string' },
         preset: { type: 'string' },
         via: { type: 'string' },
-        swarm: { type: 'string' },
-        prompt: { type: 'string' },
-        'no-launch': { type: 'boolean' },
-      },
-    });
+          swarm: { type: 'string' },
+          prompt: { type: 'string' },
+          'no-launch': { type: 'boolean' },
+        },
+      });
+    } catch (err) {
+      console.error(`invalid arguments: ${err.message}`); // e.g. --swarm -3 (parseArgs treats -3 as an option)
+      process.exit(1);
+    }
+    const { values, positionals } = parsed;
     if (values.via && !['tmux', 'cmux'].includes(values.via)) {
       console.error(`unknown surface "${values.via}" — supported: tmux, cmux`);
       process.exit(1);

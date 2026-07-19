@@ -123,7 +123,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     }
   }
 
-  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget, via, swarmId, prompt } = {}) {
+  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget, via, swarmId, prompt, fresh = false } = {}) {
     if (typeof repoPath !== 'string' || !repoPath) return { ok: false, error: 'repoPath required' };
     repoPath = repoPath.replace(/^~(?=\/|$)/, homedir()); // web/tui inputs arrive unexpanded
     prompt = typeof prompt === 'string' && prompt.trim() ? prompt.trim().slice(0, PROMPT_MAX) : null;
@@ -156,6 +156,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     async function provision() {
       const existing = byPath(wtPath) ?? byPath(real(wtPath));
       if (existing && sameIdentity(existing) && existsSync(existing.worktreePath)) {
+        if (fresh) return { ok: false, error: `worktree for branch "${branch}" already exists — swarm members must start fresh` };
         // idempotent: same repo+branch spawn returns the existing worktree, creates nothing
         return { ok: true, reused: true, ...pub(existing), command: cmd(existing.worktreePath, existing.prompt), surface: null, warnings: [] };
       }
@@ -163,6 +164,11 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
       let branchExists = true;
       try { await git(repo, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`); }
       catch { branchExists = false; }
+      // swarm members must branch fresh off base: silently reusing an old branch tip would
+      // resurrect a previous swarm's DISCARDED loser code and adopt would merge it into base
+      if (fresh && branchExists) {
+        return { ok: false, error: `branch "${branch}" already exists (previous swarm leftover?) — delete it or pass a different --branch` };
+      }
       try {
         if (branchExists) await git(repo, 'worktree', 'add', wtPath, branch);
         else await git(repo, 'worktree', 'add', '-b', branch, wtPath, baseBranch || 'HEAD');
@@ -289,12 +295,13 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     if (count < 2 || count > SWARM_MAX) return { ok: false, error: `swarm count must be 2..${SWARM_MAX}` };
     if (typeof prompt !== 'string' || !prompt.trim()) return { ok: false, error: 'swarm needs a prompt — all members must attempt the same task' };
     const swarmId = randomUUID();
-    const baseName = typeof branch === 'string' && branch ? branch : `sauron/swarm-${stamp()}`;
+    // random tail: stamp() is second-granular — two swarms in one second must not collide
+    const baseName = typeof branch === 'string' && branch ? branch : `sauron/swarm-${stamp()}-${swarmId.slice(0, 4)}`;
     const members = [];
     for (let i = 0; i < count; i++) {
       const r = await create({
         repoPath, branch: `${baseName}-${String.fromCharCode(97 + i)}`, baseBranch,
-        presetId, launch, paneTarget, via, swarmId, prompt,
+        presetId, launch, paneTarget, via, swarmId, prompt, fresh: true,
       });
       members.push(r);
       if (!r.ok) break; // partial swarm reported as-is; user can rm the created ones
@@ -330,10 +337,14 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     if (!w || w.status === 'removed') return { ok: false, error: 'worktree not found' };
     if (!existsSync(w.worktreePath)) return { ok: false, error: 'directory gone' };
     try {
-      const stat = await git(w.worktreePath, 'diff', '--stat', w.baseBranch);
+      // merge-base, not base tip: once base moves (guaranteed after the first adopt) a two-dot
+      // diff would show base's new commits REVERSED — the compare view must show only this
+      // member's own work
+      const mergeBase = await git(w.worktreePath, 'merge-base', w.baseBranch, 'HEAD');
+      const stat = await git(w.worktreePath, 'diff', '--stat', mergeBase);
       const untracked = (await git(w.worktreePath, 'status', '--porcelain'))
         .split('\n').filter((l) => l.startsWith('??')).map((l) => l.slice(3));
-      let body = await git(w.worktreePath, 'diff', w.baseBranch);
+      let body = await git(w.worktreePath, 'diff', mergeBase);
       const truncated = body.length > DIFF_CAP;
       if (truncated) body = body.slice(0, DIFF_CAP);
       return { ok: true, id: w.id, branch: w.branch, baseBranch: w.baseBranch, stat, untracked, diff: body, truncated };
@@ -342,48 +353,73 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     }
   }
 
-  // adopt = merge the winner into its base + force-remove the losers' worktrees.
+  // adopt = merge the winner into its base + remove the losers' worktrees.
   // Loser BRANCHES survive (never -D) — response carries manual delete commands.
+  // Re-adopt is allowed: alreadyMerged skips the merge and retries loser cleanup.
   async function adopt({ winnerId } = {}) {
     const w = rows.get(winnerId);
     if (!w || w.status === 'removed') return { ok: false, error: 'winner not found' };
     if (!w.swarmId) return { ok: false, error: 'not a swarm member' };
     if (!existsSync(w.worktreePath)) return { ok: false, error: 'winner directory gone' };
+    let alreadyMerged = false;
     try {
       if ((await git(w.worktreePath, 'status', '--porcelain')).length > 0) {
         return { ok: false, error: 'winner has uncommitted changes — commit in that session first' };
       }
-      // merge needs the primary checkout ON the base branch and clean — refuse otherwise, never juggle refs behind git's back
-      let cur = null;
-      try { cur = await git(w.repoPath, 'symbolic-ref', '--short', 'HEAD'); } catch { /* detached */ }
-      if (cur !== w.baseBranch) {
-        return { ok: false, error: `repo checkout is on "${cur ?? 'detached HEAD'}" — checkout ${w.baseBranch} first, or merge manually: git merge ${w.branch}` };
+      // the clean-check above and the merge below must talk about the same commits
+      const wtHead = await git(w.worktreePath, 'symbolic-ref', '--short', 'HEAD').catch(() => null);
+      if (wtHead !== w.branch) {
+        return { ok: false, error: `winner worktree is on "${wtHead ?? 'detached HEAD'}" instead of ${w.branch} — checkout ${w.branch} there first` };
       }
-      if ((await git(w.repoPath, 'status', '--porcelain')).length > 0) {
-        return { ok: false, error: 'repo working tree is dirty — commit/stash first' };
-      }
-      try {
-        await git(w.repoPath, 'merge', '--no-ff', '-m', `sauron swarm adopt: ${w.branch}`, w.branch);
-      } catch (err) {
-        await git(w.repoPath, 'merge', '--abort').catch(() => {});
-        return { ok: false, error: `merge failed (aborted, repo untouched) — resolve manually: git merge ${w.branch} · ${gitErr(err)}` };
+      alreadyMerged = await git(w.repoPath, 'merge-base', '--is-ancestor', `refs/heads/${w.branch}`, w.baseBranch).then(() => true, () => false);
+      if (!alreadyMerged) {
+        // merge needs the primary checkout ON the base branch and clean — refuse otherwise, never juggle refs behind git's back
+        let cur = null;
+        try { cur = await git(w.repoPath, 'symbolic-ref', '--short', 'HEAD'); } catch { /* detached */ }
+        if (cur !== w.baseBranch) {
+          return { ok: false, error: `repo checkout is on "${cur ?? 'detached HEAD'}" — checkout ${w.baseBranch} first, or merge manually: git merge ${w.branch}` };
+        }
+        if (await git(w.repoPath, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').then(() => true, () => false)) {
+          return { ok: false, error: 'repo has an unfinished merge — resolve it or `git merge --abort` first' };
+        }
+        if ((await git(w.repoPath, 'status', '--porcelain')).length > 0) {
+          return { ok: false, error: 'repo working tree is dirty — commit/stash first' };
+        }
+        try {
+          // refs/heads/: a same-named tag must never shadow the branch (same guard as gc)
+          await git(w.repoPath, 'merge', '--no-ff', '-m', `sauron swarm adopt: ${w.branch}`, `refs/heads/${w.branch}`);
+        } catch (err) {
+          await git(w.repoPath, 'merge', '--abort').catch(() => {});
+          return { ok: false, error: `merge failed (aborted, repo untouched) — resolve manually: git merge ${w.branch} · ${gitErr(err)}` };
+        }
       }
     } catch (err) {
       return { ok: false, error: gitErr(err) };
     }
-    // decision made: the merged winner worktree is done — hand it to gc unless a live session still sits in it
-    if (w.status !== 'active' || orphaned(w)) setStatus(w, 'pending-cleanup', { endedAt: w.endedAt ?? Date.now() });
+    // winner removed concurrently during the awaits (🗑 click, gc --force) → merge landed, but don't resurrect the row
+    if (w.status !== 'removed') {
+      // decision made: winner worktree is done — unless ANY non-ended session still sits in it
+      const ws = w.sessionId ? session(w.sessionId) : null;
+      if (!ws || ws.state === 'ended') setStatus(w, 'pending-cleanup', { endedAt: w.endedAt ?? Date.now() });
+    }
     const losers = [...rows.values()].filter((x) => x.swarmId === w.swarmId && x.id !== w.id && x.status !== 'removed');
     const losersRemoved = [], losersSkipped = [];
     for (const l of losers) {
-      const r = await remove(l.id, { force: true }); // discarded by decision; live sessions still refuse inside remove()
+      // conservative owner check: 'stale' may just be a long tool call (no hooks for >5min) —
+      // only sessions that actually ENDED (or never linked) lose their worktree here
+      const s = l.sessionId ? session(l.sessionId) : null;
+      if (s && s.state !== 'ended') {
+        losersSkipped.push({ id: l.id, branch: l.branch, error: `session ${s.state} — end it, then: sauron worktree rm ${l.id} --force` });
+        continue;
+      }
+      const r = await remove(l.id, { force: true }); // discarded by decision
       if (r.ok) losersRemoved.push({ id: l.id, branch: l.branch });
       else losersSkipped.push({ id: l.id, branch: l.branch, error: r.error });
     }
     return {
-      ok: true, merged: w.branch, into: w.baseBranch,
+      ok: true, merged: w.branch, into: w.baseBranch, alreadyMerged,
       losersRemoved, losersSkipped,
-      branchCleanup: losers.map((l) => `git -C ${l.repoPath} branch -D ${l.branch}`), // manual by design
+      branchCleanup: losersRemoved.map((l) => `git -C ${w.repoPath} branch -D ${l.branch}`), // manual by design
     };
   }
 
