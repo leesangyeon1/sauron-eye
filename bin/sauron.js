@@ -99,6 +99,8 @@ switch (cmd) {
         base: { type: 'string' },
         preset: { type: 'string' },
         via: { type: 'string' },
+        swarm: { type: 'string' },
+        prompt: { type: 'string' },
         'no-launch': { type: 'boolean' },
       },
     });
@@ -106,7 +108,7 @@ switch (cmd) {
       console.error(`unknown surface "${values.via}" — supported: tmux, cmux`);
       process.exit(1);
     }
-    const r = await api('POST', '/api/worktree/create', {
+    const common = {
       repoPath: resolve(positionals[0] ?? '.'),
       branch: values.branch,
       baseBranch: values.base,
@@ -114,7 +116,26 @@ switch (cmd) {
       launch: !values['no-launch'],
       paneTarget: process.env.TMUX_PANE, // present iff spawn ran inside tmux → split in place
       via: values.via, // omitted → daemon auto-detects (cmux > tmux)
-    });
+    };
+    if (values.swarm) {
+      const r = await api('POST', '/api/swarm/create', { ...common, count: Number(values.swarm), prompt: values.prompt });
+      if (!r.ok && !r.members?.length) { console.error(`swarm failed: ${r.error}`); process.exit(1); }
+      console.log(`swarm:    ${r.swarmId} (${r.members.length} members)`);
+      for (const m of r.members) {
+        if (m.ok) console.log(`  ${m.branch.padEnd(36)} ${m.worktreePath}`);
+        else console.log(`  FAILED: ${m.error}`);
+      }
+      const q = r.quota?.claude;
+      const hot = (x) => x?.usedPct != null && x.usedPct >= 70;
+      if (hot(q?.rate5h) || hot(q?.rate7d)) {
+        console.log(`warning:  quota 5h ${q.rate5h?.usedPct ?? '?'}% · 7d ${q.rate7d?.usedPct ?? '?'}% — ${r.members.length} parallel sessions will burn it fast`);
+      }
+      console.log(`compare:  http://127.0.0.1:${port}/#worktrees → 채택으로 머지`);
+      if (!r.ok) process.exit(1);
+      break;
+    }
+    if (values.prompt) console.error('note: --prompt without --swarm is ignored'); // single spawn = interactive session
+    const r = await api('POST', '/api/worktree/create', common);
     if (!r.ok) {
       console.error(`spawn failed: ${r.error}`);
       process.exit(1);
@@ -124,6 +145,39 @@ switch (cmd) {
     for (const w of r.warnings ?? []) console.log(`warning:  ${w}`);
     if (r.surface?.ok) console.log(`surface:  ${r.surface.note}${r.surface.hint ? ` — ${r.surface.hint}` : ''}`);
     else console.log(`run:      ${r.command}${r.surface?.hint ? `  (tmux: ${r.surface.hint})` : ''}`);
+    break;
+  }
+  case 'swarm': {
+    const sub = process.argv[3];
+    if (sub === 'ls') {
+      const r = await api('GET', '/api/swarm/list');
+      if (r.error) { console.error(r.error); process.exit(1); }
+      if (!r.swarms?.length) { console.log('no swarms'); break; }
+      for (const s of r.swarms) {
+        console.log(`${s.swarmId}  base ${s.baseBranch}  "${(s.prompt ?? '').slice(0, 60)}"`);
+        for (const m of s.members) {
+          const sess = m.session?.state ?? (m.sessionId ? 'ended' : '-');
+          console.log(`  ${m.status.padEnd(16)} ${sess.padEnd(12)} ${m.branch.padEnd(36)} ${m.id}`);
+        }
+      }
+      break;
+    }
+    if (sub === 'adopt') {
+      const winnerId = process.argv[4];
+      if (!winnerId || winnerId.startsWith('--')) { console.error('usage: sauron swarm adopt <winner-worktree-id>'); process.exit(1); }
+      const r = await api('POST', '/api/swarm/adopt', { winnerId });
+      if (!r.ok) { console.error(r.error); process.exit(1); }
+      console.log(`merged ${r.merged} → ${r.into}`);
+      for (const l of r.losersRemoved) console.log(`  removed: ${l.branch}`);
+      for (const l of r.losersSkipped) console.log(`  skipped: ${l.branch} — ${l.error}`);
+      if (r.branchCleanup?.length) {
+        console.log('loser branches kept — delete manually if wanted:');
+        for (const c of r.branchCleanup) console.log(`  ${c}`);
+      }
+      break;
+    }
+    console.log('usage: sauron swarm <ls|adopt <winner-id>>');
+    process.exit(sub ? 1 : 0);
     break;
   }
   case 'worktree': {
@@ -185,6 +239,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux|cmux] [--no-launch]|worktree <ls|gc|rm>|install [--dry-run]|uninstall|status>`);
+    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux|cmux] [--swarm N --prompt "task"] [--no-launch]|swarm <ls|adopt <id>>|worktree <ls|gc|rm>|install [--dry-run]|uninstall|status>`);
     process.exit(cmd ? 1 : 0);
 }

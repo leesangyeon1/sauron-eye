@@ -14,6 +14,10 @@ const DEFAULT_FRIDGE = process.env.SAURON_FRIDGE_URL || 'http://127.0.0.1:4924';
 const GC_STATES = ['pending-cleanup', 'clean', 'dirty'];
 
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'x';
+const shq = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`; // surfaces run command via shell
+const SWARM_MAX = 10;
+const PROMPT_MAX = 2000;
+const DIFF_CAP = 400_000;
 const shortHash = (s) => createHash('sha256').update(String(s)).digest('hex').slice(0, 6);
 const real = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
 const gitErr = (err) => String(err?.stderr || err?.message || err).trim(); // || not ??: ENOENT has stderr === ''
@@ -40,8 +44,10 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     id: w.id, repoPath: w.repoPath, baseBranch: w.baseBranch, branch: w.branch,
     worktreePath: w.worktreePath, presetId: w.presetId, sessionId: w.sessionId,
     status: w.status, createdAt: w.createdAt, endedAt: w.endedAt,
+    swarmId: w.swarmId ?? null, prompt: w.prompt ?? null,
   });
-  const cmd = (p) => `cd '${p}' && claude`;
+  const claudeCmd = (prompt) => prompt ? `claude ${shq(prompt)}` : 'claude';
+  const cmd = (p, prompt) => `cd ${shq(p)} && ${claudeCmd(prompt)}`;
   const session = (id) => registry.sessions().find((s) => s.sessionId === id);
   // a linked session that is stale/ended/vanished no longer owns the worktree
   const orphaned = (w) => { const s = session(w.sessionId); return !s || s.state === 'stale' || s.state === 'ended'; };
@@ -117,9 +123,10 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     }
   }
 
-  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget, via } = {}) {
+  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget, via, swarmId, prompt } = {}) {
     if (typeof repoPath !== 'string' || !repoPath) return { ok: false, error: 'repoPath required' };
     repoPath = repoPath.replace(/^~(?=\/|$)/, homedir()); // web/tui inputs arrive unexpanded
+    prompt = typeof prompt === 'string' && prompt.trim() ? prompt.trim().slice(0, PROMPT_MAX) : null;
     let repo;
     try {
       repo = real(await git(resolve(repoPath), 'rev-parse', '--show-toplevel'));
@@ -150,7 +157,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
       const existing = byPath(wtPath) ?? byPath(real(wtPath));
       if (existing && sameIdentity(existing) && existsSync(existing.worktreePath)) {
         // idempotent: same repo+branch spawn returns the existing worktree, creates nothing
-        return { ok: true, reused: true, ...pub(existing), command: cmd(existing.worktreePath), surface: null, warnings: [] };
+        return { ok: true, reused: true, ...pub(existing), command: cmd(existing.worktreePath, existing.prompt), surface: null, warnings: [] };
       }
       mkdirSync(dirname(wtPath), { recursive: true });
       let branchExists = true;
@@ -170,6 +177,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
         id: randomUUID(), repoPath: repo, baseBranch: base, branch,
         worktreePath: real(wtPath), presetId: presetId ?? null, sessionId: null,
         status: 'provisioning', createdAt: Date.now(), endedAt: null, lastCheckedAt: null,
+        swarmId: swarmId ?? null, prompt,
       };
       rows.set(w.id, w);
       save(w);
@@ -181,10 +189,10 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
       let surfaceResult = null;
       if (launch && surface) {
         surfaceResult = await surface
-          .launch({ cwd: w.worktreePath, command: 'claude', title: `${repoSlug}-${slug(branch)}`, pane: paneTarget, via })
+          .launch({ cwd: w.worktreePath, command: claudeCmd(prompt), title: `${repoSlug}-${slug(branch)}`, pane: paneTarget, via })
           .catch((err) => ({ ok: false, hint: String(err?.message ?? err) })); // surface contract says no-throw; belt and suspenders
       }
-      return { ok: true, reused: false, ...pub(w), command: cmd(w.worktreePath), surface: surfaceResult, warnings };
+      return { ok: true, reused: false, ...pub(w), command: cmd(w.worktreePath, prompt), surface: surfaceResult, warnings };
     }
   }
 
@@ -274,6 +282,111 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     return { ok: true, removed: true, note: `branch "${w.branch}" kept — delete with: git -C ${w.repoPath} branch -d ${w.branch}` };
   }
 
+  // N parallel attempts at the same task: branches <base>-a … -<n>, same prompt, one swarmId.
+  // README §7 시나리오 B: compare in the diff view → adopt one → losers cleaned up.
+  async function swarm({ repoPath, branch, baseBranch, presetId, count, prompt, via, paneTarget, launch = true } = {}) {
+    count = Math.floor(Number(count) || 0);
+    if (count < 2 || count > SWARM_MAX) return { ok: false, error: `swarm count must be 2..${SWARM_MAX}` };
+    if (typeof prompt !== 'string' || !prompt.trim()) return { ok: false, error: 'swarm needs a prompt — all members must attempt the same task' };
+    const swarmId = randomUUID();
+    const baseName = typeof branch === 'string' && branch ? branch : `sauron/swarm-${stamp()}`;
+    const members = [];
+    for (let i = 0; i < count; i++) {
+      const r = await create({
+        repoPath, branch: `${baseName}-${String.fromCharCode(97 + i)}`, baseBranch,
+        presetId, launch, paneTarget, via, swarmId, prompt,
+      });
+      members.push(r);
+      if (!r.ok) break; // partial swarm reported as-is; user can rm the created ones
+    }
+    // quota snapshot rides along — N sessions eat N× tokens (README §8 리스크)
+    return { ok: members.every((m) => m.ok), swarmId, prompt, members, quota: registry.quota() };
+  }
+
+  function swarms() {
+    const live = new Map(registry.sessions().map((s) => [s.sessionId, s]));
+    const by = new Map();
+    for (const w of rows.values()) {
+      if (!w.swarmId || w.status === 'removed') continue;
+      if (!by.has(w.swarmId)) by.set(w.swarmId, []);
+      by.get(w.swarmId).push(w);
+    }
+    return [...by.entries()].map(([swarmId, ms]) => ({
+      swarmId,
+      prompt: ms[0].prompt ?? null,
+      repoPath: ms[0].repoPath,
+      baseBranch: ms[0].baseBranch,
+      createdAt: Math.min(...ms.map((m) => m.createdAt)),
+      members: ms.sort((a, b) => a.branch.localeCompare(b.branch)).map((w) => {
+        const s = w.sessionId ? live.get(w.sessionId) : null;
+        return { ...pub(w), session: s ? { state: s.state, model: s.model ?? null, costUsd: s.costUsd ?? null } : null };
+      }),
+    })).sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  // working tree vs base: committed + staged + unstaged in one view (untracked listed separately)
+  async function diff(ref) {
+    const w = rows.get(ref) ?? byPath(real(String(ref)));
+    if (!w || w.status === 'removed') return { ok: false, error: 'worktree not found' };
+    if (!existsSync(w.worktreePath)) return { ok: false, error: 'directory gone' };
+    try {
+      const stat = await git(w.worktreePath, 'diff', '--stat', w.baseBranch);
+      const untracked = (await git(w.worktreePath, 'status', '--porcelain'))
+        .split('\n').filter((l) => l.startsWith('??')).map((l) => l.slice(3));
+      let body = await git(w.worktreePath, 'diff', w.baseBranch);
+      const truncated = body.length > DIFF_CAP;
+      if (truncated) body = body.slice(0, DIFF_CAP);
+      return { ok: true, id: w.id, branch: w.branch, baseBranch: w.baseBranch, stat, untracked, diff: body, truncated };
+    } catch (err) {
+      return { ok: false, error: gitErr(err) };
+    }
+  }
+
+  // adopt = merge the winner into its base + force-remove the losers' worktrees.
+  // Loser BRANCHES survive (never -D) — response carries manual delete commands.
+  async function adopt({ winnerId } = {}) {
+    const w = rows.get(winnerId);
+    if (!w || w.status === 'removed') return { ok: false, error: 'winner not found' };
+    if (!w.swarmId) return { ok: false, error: 'not a swarm member' };
+    if (!existsSync(w.worktreePath)) return { ok: false, error: 'winner directory gone' };
+    try {
+      if ((await git(w.worktreePath, 'status', '--porcelain')).length > 0) {
+        return { ok: false, error: 'winner has uncommitted changes — commit in that session first' };
+      }
+      // merge needs the primary checkout ON the base branch and clean — refuse otherwise, never juggle refs behind git's back
+      let cur = null;
+      try { cur = await git(w.repoPath, 'symbolic-ref', '--short', 'HEAD'); } catch { /* detached */ }
+      if (cur !== w.baseBranch) {
+        return { ok: false, error: `repo checkout is on "${cur ?? 'detached HEAD'}" — checkout ${w.baseBranch} first, or merge manually: git merge ${w.branch}` };
+      }
+      if ((await git(w.repoPath, 'status', '--porcelain')).length > 0) {
+        return { ok: false, error: 'repo working tree is dirty — commit/stash first' };
+      }
+      try {
+        await git(w.repoPath, 'merge', '--no-ff', '-m', `sauron swarm adopt: ${w.branch}`, w.branch);
+      } catch (err) {
+        await git(w.repoPath, 'merge', '--abort').catch(() => {});
+        return { ok: false, error: `merge failed (aborted, repo untouched) — resolve manually: git merge ${w.branch} · ${gitErr(err)}` };
+      }
+    } catch (err) {
+      return { ok: false, error: gitErr(err) };
+    }
+    // decision made: the merged winner worktree is done — hand it to gc unless a live session still sits in it
+    if (w.status !== 'active' || orphaned(w)) setStatus(w, 'pending-cleanup', { endedAt: w.endedAt ?? Date.now() });
+    const losers = [...rows.values()].filter((x) => x.swarmId === w.swarmId && x.id !== w.id && x.status !== 'removed');
+    const losersRemoved = [], losersSkipped = [];
+    for (const l of losers) {
+      const r = await remove(l.id, { force: true }); // discarded by decision; live sessions still refuse inside remove()
+      if (r.ok) losersRemoved.push({ id: l.id, branch: l.branch });
+      else losersSkipped.push({ id: l.id, branch: l.branch, error: r.error });
+    }
+    return {
+      ok: true, merged: w.branch, into: w.baseBranch,
+      losersRemoved, losersSkipped,
+      branchCleanup: losers.map((l) => `git -C ${l.repoPath} branch -D ${l.branch}`), // manual by design
+    };
+  }
+
   function list() {
     const live = new Map(registry.sessions().map((s) => [s.sessionId, s]));
     return [...rows.values()]
@@ -287,6 +400,10 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
 
   return {
     create,
+    swarm,
+    swarms,
+    diff,
+    adopt,
     gc,
     remove,
     list,

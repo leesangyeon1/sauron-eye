@@ -139,7 +139,8 @@ export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}
         return json(res, 200, { ok: true });
       }
 
-      if (req.method === 'POST' && (rawPath === '/api/worktree/create' || rawPath === '/api/worktree/gc')) {
+      const wtPost = ['/api/worktree/create', '/api/worktree/gc', '/api/swarm/create', '/api/swarm/adopt'];
+      if (req.method === 'POST' && wtPost.includes(rawPath)) {
         const body = await readBody(req);
         if (body === null) return json(res, 413, { ok: false, error: 'body too large' });
         let payload;
@@ -147,11 +148,18 @@ export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}
         if (rawPath === '/api/worktree/gc') {
           return json(res, 200, await worktrees.gc({ dryRun: payload.dryRun !== false }));
         }
-        const r = await worktrees.create({
+        if (rawPath === '/api/swarm/adopt') {
+          const r = await worktrees.adopt({ winnerId: payload.winnerId });
+          return json(res, r.ok ? 200 : 400, r);
+        }
+        const opts = {
           repoPath: payload.repoPath, branch: payload.branch, baseBranch: payload.baseBranch,
           presetId: payload.presetId, launch: payload.launch !== false, paneTarget: payload.paneTarget,
           via: payload.via,
-        });
+        };
+        const r = rawPath === '/api/swarm/create'
+          ? await worktrees.swarm({ ...opts, count: payload.count, prompt: payload.prompt })
+          : await worktrees.create(opts);
         return json(res, r.ok ? 200 : 400, r);
       }
 
@@ -169,6 +177,15 @@ export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}
 
       if (rawPath === '/api/worktree/list') {
         return json(res, 200, { worktrees: worktrees.list() });
+      }
+
+      if (rawPath === '/api/worktree/diff') {
+        const r = await worktrees.diff(url.searchParams.get('ref') ?? '');
+        return json(res, r.ok ? 200 : 400, r);
+      }
+
+      if (rawPath === '/api/swarm/list') {
+        return json(res, 200, { swarms: worktrees.swarms() });
       }
 
       // browser can't hit AI-Refrigerator cross-origin — proxy the preset list (soft dependency)

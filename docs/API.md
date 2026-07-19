@@ -232,6 +232,40 @@ AI-Refrigerator `GET :4924/api/presets` 프록시 (브라우저 CORS 우회용).
   worktree 뷰에서 `g` gc dry / `G` gc force(y/N) / `x` rm(dirty 면 force 재확인).
 - create 의 repoPath 는 `~/` 프리픽스 허용 (서버가 homedir 확장).
 
+## Phase 5 — swarm (병렬 시도 → 비교 → 채택)
+
+### POST /api/swarm/create
+`{ repoPath, count(2..10), prompt(필수), branch?, baseBranch?, presetId?, via?, paneTarget?, launch? }`
+브랜치 `<base>-a … -<n>`, 전원 동일 prompt (`claude '<prompt>'` 로 실행), 하나의 swarmId.
+응답: `{ ok, swarmId, prompt, members: [create 응답…], quota }` — quota 는 spawn 시점 스냅샷
+(N 병렬 세션 쿼터 경고용). 부분 실패 시 ok:false + 성공한 members 는 그대로 살아있음.
+
+### GET /api/swarm/list
+`{ swarms: [{ swarmId, prompt, repoPath, baseBranch, createdAt, members:[pub+session] }] }`
+
+### GET /api/worktree/diff?ref=<id|path>
+`{ ok, branch, baseBranch, stat, untracked:[…], diff, truncated }` —
+working tree vs base (커밋+스테이징+미커밋 전부), 400KB 캡.
+
+### POST /api/swarm/adopt  `{ winnerId }`
+1. winner 미커밋 있으면 거부 (세션에서 커밋 먼저)
+2. 저장소 본 체크아웃이 baseBranch 위 + clean 일 때만 `merge --no-ff` (아니면 수동 머지 안내)
+3. 충돌 → `merge --abort` 후 에러 (저장소 무손상)
+4. 패자: worktree 만 force 제거(명시적 폐기 결정), **브랜치는 유지** — 응답 branchCleanup 에
+   수동 삭제 커맨드. 라이브 세션 있는 패자는 skip (losersSkipped).
+5. winner 는 pending-cleanup 전이 (라이브 세션 있으면 유지) → 이후 일반 gc 가 수거.
+
+### CLI
+```
+sauron spawn <repo> --swarm 3 --prompt "태스크"   # 멤버 목록 + 쿼터 70%+ 경고
+sauron swarm ls
+sauron swarm adopt <winner-worktree-id>
+```
+
+### web
+Worktrees 탭 상단에 swarm 카드 — 멤버별 상태/세션/[diff]/[👑 채택].
+diff 모달: +/-/hunk 컬러, stat + untracked + truncated 표시.
+
 ## Phase 4 — surfaces/cmux + 알림
 - `surfaces/cmux.js`: `cmux --json new-workspace --cwd <p> --command <c> [--description <t>]`
   (문법 출처: manaflow-ai/cmux docs/cli-contract.md). detect() 는 binary(`--version`)와

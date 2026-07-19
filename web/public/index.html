@@ -142,6 +142,21 @@
   .wbadge.clean { background: var(--grey); }
   .wbadge.dirty { background: var(--red); }
   .wpath { font-size: 11px; color: var(--dim); overflow-wrap: anywhere; }
+  .swarm { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; margin-bottom: 12px; }
+  .swarm .shead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+  .swarm .sprompt { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .swarm .smember { display: flex; gap: 8px; align-items: center; padding: 4px 0;
+    border-top: 1px solid var(--border); font-size: 13px; }
+  .swarm .smember .num { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #dmodal .mbox { width: min(920px, 100%); }
+  #d-pre { flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; font-size: 12px; margin: 0; line-height: 1.5; }
+  #d-pre .dl-add { color: var(--green); }
+  #d-pre .dl-del { color: var(--red); }
+  #d-pre .dl-hunk { color: var(--blue); }
+  #d-pre .dl-file { font-weight: 700; }
+  #d-stat { font-size: 12px; color: var(--dim); margin-top: 8px; white-space: pre-wrap; }
 
   /* ---- map tab ---- */
   #view-map { display: flex; overflow: hidden; }
@@ -190,7 +205,7 @@
     color: var(--dim); pointer-events: none; }
 
   /* ---- modal / toast ---- */
-  #modal { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.5);
+  #modal, #dmodal { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.5);
     display: flex; align-items: center; justify-content: center; padding: 24px; }
   .mbox { background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
     width: min(640px, 100%); max-height: 85vh; display: flex; flex-direction: column; padding: 16px; }
@@ -227,8 +242,11 @@
     <input id="wt-base" placeholder="base" size="8">
     <input id="wt-preset" list="wt-presets" placeholder="preset (선택)" size="14">
     <datalist id="wt-presets"></datalist>
+    <input id="wt-swarm" type="number" min="1" max="10" value="1" title="swarm 크기 (2+ 면 병렬 시도)" style="width:58px">
+    <input id="wt-prompt" placeholder="prompt (swarm 필수 — 전원 같은 태스크)" style="flex:1;min-width:200px">
     <button class="btn" id="wt-spawn">🌱 Spawn</button>
   </div>
+  <div id="swarm-list"></div>
   <div class="wtbar">
     <button class="btn" id="wt-gc">GC 검사 (dry-run)</button>
     <button class="btn" id="wt-gc-force" hidden>정리 실행 — clean 삭제</button>
@@ -274,6 +292,13 @@
     <pre id="mx-pre" class="num"></pre>
     <div id="mx-hints"></div>
     <div class="mfoot"><button class="btn" id="mxcopy">⧉ 복사</button></div>
+  </div>
+</div>
+<div id="dmodal" hidden>
+  <div class="mbox">
+    <div class="mhead"><b id="d-title">diff</b><button class="x" id="dclose">✕</button></div>
+    <pre id="d-pre" class="num"></pre>
+    <div id="d-stat"></div>
   </div>
 </div>
 <div id="toast" hidden></div>
@@ -491,6 +516,10 @@ document.addEventListener('click', e => {
   if (cp) { navigator.clipboard?.writeText(cp.dataset.copy).then(() => toast('복사됨'), () => {}); return; }
   const rm = e.target.closest('[data-wrm]');
   if (rm) { rmWt(rm.dataset.wrm); return; }
+  const df = e.target.closest('[data-wdiff]');
+  if (df) { openDiff(df.dataset.wdiff); return; }
+  const ad = e.target.closest('[data-adopt]');
+  if (ad) { adoptWt(ad.dataset.adopt, ad.dataset.branch); return; }
   if (e.target.id === 'pclose' || e.target.id === 'shade') return closePanel();
   const c = e.target.closest('.card[data-sid]');
   if (c && $('view-sessions').contains(c)) openPanel(c.dataset.sid);
@@ -513,6 +542,7 @@ async function loadWorktrees() {
     for (const w of j.worktrees ?? []) wtUpsert(w);
   } catch {}
   renderWorktrees();
+  loadSwarms();
 }
 
 async function loadPresets() {
@@ -547,20 +577,33 @@ function renderWorktrees() {
 async function spawnWt() {
   const repoPath = $('wt-repo').value.trim();
   if (!repoPath) return toast('repo 경로를 입력하세요');
+  const count = Math.floor(Number($('wt-swarm').value) || 1);
+  const prompt = $('wt-prompt').value.trim();
+  if (count >= 2 && !prompt) return toast('swarm 은 prompt 필수 — 전원 같은 태스크를 받아야 비교가 됩니다');
   $('wt-spawn').disabled = true;
   try {
-    const r = await (await fetch('/api/worktree/create', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        repoPath,
-        branch: $('wt-branch').value.trim() || undefined,
-        baseBranch: $('wt-base').value.trim() || undefined,
-        presetId: $('wt-preset').value.trim() || undefined,
-      }),
+    const body = {
+      repoPath,
+      branch: $('wt-branch').value.trim() || undefined,
+      baseBranch: $('wt-base').value.trim() || undefined,
+      presetId: $('wt-preset').value.trim() || undefined,
+    };
+    const url = count >= 2 ? '/api/swarm/create' : '/api/worktree/create';
+    if (count >= 2) { body.count = count; body.prompt = prompt; }
+    const r = await (await fetch(url, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     })).json();
-    if (!r.ok) { toast('spawn 실패: ' + (r.error ?? '?')); return; }
-    const extra = (r.warnings ?? [])[0] ?? (r.surface?.ok ? r.surface.note : r.surface?.hint ? 'surface 실패 — ⧉ cd 로 수동 실행' : '');
-    toast((r.reused ? '기존 worktree 재사용' : 'spawned: ' + r.branch) + (extra ? ' · ' + extra : ''));
+    if (count >= 2) {
+      if (!r.members?.length) { toast('swarm 실패: ' + (r.error ?? '?')); return; }
+      const okN = r.members.filter(m => m.ok).length;
+      const q = r.quota?.claude;
+      const hot = q && ((q.rate5h?.usedPct ?? 0) >= 70 || (q.rate7d?.usedPct ?? 0) >= 70);
+      toast(`swarm ${okN}/${r.members.length} spawned${hot ? ' · ⚠ 쿼터 높음 — 병렬 세션이 빨리 태움' : ''}`);
+    } else {
+      if (!r.ok) { toast('spawn 실패: ' + (r.error ?? '?')); return; }
+      const extra = (r.warnings ?? [])[0] ?? (r.surface?.ok ? r.surface.note : r.surface?.hint ? 'surface 실패 — ⧉ cd 로 수동 실행' : '');
+      toast((r.reused ? '기존 worktree 재사용' : 'spawned: ' + r.branch) + (extra ? ' · ' + extra : ''));
+    }
     loadWorktrees();
   } catch {
     toast('spawn 실패 — 데몬 연결 안 됨');
@@ -568,6 +611,60 @@ async function spawnWt() {
     $('wt-spawn').disabled = false;
   }
 }
+
+// ---------- swarm compare / diff / adopt ----------
+async function loadSwarms() {
+  let swarms = [];
+  try { swarms = (await (await fetch('/api/swarm/list')).json()).swarms ?? []; } catch {}
+  $('swarm-list').innerHTML = swarms.map(sw => `<div class="swarm">
+    <div class="shead"><b>🐝 swarm</b><span class="sprompt" title="${esc(sw.prompt ?? '')}">"${esc(sw.prompt ?? '')}"</span>
+      <span class="dim num">→ ${esc(sw.baseBranch)} · ${rel(sw.createdAt)}</span></div>
+    ${sw.members.map(m => {
+      const s = m.sessionId ? sessions.get(m.sessionId) : null;
+      const sess = s ? `<span class="badge ${esc(s.state)}">${esc(s.state)}</span>` : (m.sessionId ? '<span class="dim">ended</span>' : '<span class="dim">—</span>');
+      return `<div class="smember">
+        <span class="wbadge ${esc(m.status)}">${esc(m.status)}</span>
+        <span class="num" style="flex:1" title="${esc(m.worktreePath)}">${esc(m.branch)}</span>${sess}
+        <button class="btn" data-wdiff="${esc(m.id)}">diff</button>
+        <button class="btn" data-adopt="${esc(m.id)}" data-branch="${esc(m.branch)}">👑 채택</button>
+      </div>`;
+    }).join('')}
+  </div>`).join('');
+}
+
+const DIFF_LINE = l =>
+  l.startsWith('diff --git') ? 'dl-file' :
+  l.startsWith('@@') ? 'dl-hunk' :
+  l.startsWith('+') && !l.startsWith('+++') ? 'dl-add' :
+  l.startsWith('-') && !l.startsWith('---') ? 'dl-del' : '';
+
+async function openDiff(id) {
+  try {
+    const r = await (await fetch('/api/worktree/diff?ref=' + encodeURIComponent(id))).json();
+    if (!r.ok) return toast(r.error ?? 'diff 실패');
+    $('d-title').textContent = `${r.branch} ↔ ${r.baseBranch}`;
+    $('d-pre').innerHTML = r.diff
+      ? r.diff.split('\n').map(l => `<span class="${DIFF_LINE(l)}">${esc(l)}</span>`).join('\n')
+      : '(변경 없음)';
+    $('d-stat').textContent = [r.stat, r.untracked?.length ? `untracked: ${r.untracked.join(', ')}` : '', r.truncated ? '… (truncated)' : '']
+      .filter(Boolean).join('\n');
+    $('dmodal').hidden = false;
+  } catch { toast('diff 실패 — 데몬 연결 안 됨'); }
+}
+
+async function adoptWt(id, branch) {
+  if (!confirm(`"${branch}" 채택?\n→ base 로 머지하고 나머지 멤버 worktree 를 정리합니다 (브랜치는 유지).`)) return;
+  try {
+    const r = await (await fetch('/api/swarm/adopt', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ winnerId: id }),
+    })).json();
+    if (!r.ok) return toast(r.error ?? 'adopt 실패');
+    toast(`merged ${r.merged} → ${r.into} · 패자 ${r.losersRemoved.length} 정리${r.losersSkipped.length ? ` · ${r.losersSkipped.length} skip` : ''}`);
+    loadWorktrees();
+  } catch { toast('adopt 실패 — 데몬 연결 안 됨'); }
+}
+$('dclose').addEventListener('click', () => { $('dmodal').hidden = true; });
+$('dmodal').addEventListener('click', e => { if (e.target === $('dmodal')) $('dmodal').hidden = true; });
 
 async function rmWt(id) {
   const w = worktrees.get(id);
@@ -944,6 +1041,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closePanel();
     $('modal').hidden = true;
+    $('dmodal').hidden = true;
     if (tab === 'map' && (map.place || map.sel)) { map.place = null; map.sel = null; renderPalette(); renderWorld(); }
     return;
   }
