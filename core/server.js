@@ -155,7 +155,7 @@ export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}
         const opts = {
           repoPath: payload.repoPath, branch: payload.branch, baseBranch: payload.baseBranch,
           presetId: payload.presetId, launch: payload.launch !== false, paneTarget: payload.paneTarget,
-          via: payload.via,
+          via: payload.via, agent: payload.agent,
         };
         const r = rawPath === '/api/swarm/create'
           ? await worktrees.swarm({ ...opts, count: payload.count, prompt: payload.prompt })

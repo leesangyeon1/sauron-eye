@@ -18,6 +18,17 @@ const shq = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`; // surfaces run co
 const SWARM_MAX = 10;
 const PROMPT_MAX = 2000;
 const DIFF_CAP = 400_000;
+
+// launch syntax per agent CLI (all verified against each CLI's --help, 2026-07):
+//   claude '<prompt>' · codex '<prompt>' (cwd already set by the surface's `cd`) ·
+//   gemini -i '<prompt>' · grok '<prompt>'. No prompt → bare interactive TUI.
+const AGENTS = {
+  claude: (p) => (p ? `claude ${shq(p)}` : 'claude'),
+  codex: (p) => (p ? `codex ${shq(p)}` : 'codex'),
+  gemini: (p) => (p ? `gemini -i ${shq(p)}` : 'gemini'),
+  grok: (p) => (p ? `grok ${shq(p)}` : 'grok'),
+};
+export const AGENT_NAMES = Object.keys(AGENTS);
 const shortHash = (s) => createHash('sha256').update(String(s)).digest('hex').slice(0, 6);
 const real = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
 const gitErr = (err) => String(err?.stderr || err?.message || err).trim(); // || not ??: ENOENT has stderr === ''
@@ -44,10 +55,10 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     id: w.id, repoPath: w.repoPath, baseBranch: w.baseBranch, branch: w.branch,
     worktreePath: w.worktreePath, presetId: w.presetId, sessionId: w.sessionId,
     status: w.status, createdAt: w.createdAt, endedAt: w.endedAt,
-    swarmId: w.swarmId ?? null, prompt: w.prompt ?? null,
+    swarmId: w.swarmId ?? null, prompt: w.prompt ?? null, agent: w.agent ?? 'claude',
   });
-  const claudeCmd = (prompt) => prompt ? `claude ${shq(prompt)}` : 'claude';
-  const cmd = (p, prompt) => `cd ${shq(p)} && ${claudeCmd(prompt)}`;
+  const agentCmd = (agent, prompt) => (AGENTS[agent] ?? AGENTS.claude)(prompt);
+  const cmd = (p, agent, prompt) => `cd ${shq(p)} && ${agentCmd(agent, prompt)}`;
   const session = (id) => registry.sessions().find((s) => s.sessionId === id);
   // a linked session that is stale/ended/vanished no longer owns the worktree
   const orphaned = (w) => { const s = session(w.sessionId); return !s || s.state === 'stale' || s.state === 'ended'; };
@@ -123,8 +134,9 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     }
   }
 
-  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget, via, swarmId, prompt, fresh = false } = {}) {
+  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget, via, swarmId, prompt, fresh = false, agent = 'claude' } = {}) {
     if (typeof repoPath !== 'string' || !repoPath) return { ok: false, error: 'repoPath required' };
+    if (!AGENTS[agent]) return { ok: false, error: `unknown agent "${agent}" — one of: ${AGENT_NAMES.join(', ')}` };
     repoPath = repoPath.replace(/^~(?=\/|$)/, homedir()); // web/tui inputs arrive unexpanded
     prompt = typeof prompt === 'string' && prompt.trim() ? prompt.trim().slice(0, PROMPT_MAX) : null;
     let repo;
@@ -158,7 +170,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
       if (existing && sameIdentity(existing) && existsSync(existing.worktreePath)) {
         if (fresh) return { ok: false, error: `worktree for branch "${branch}" already exists — swarm members must start fresh` };
         // idempotent: same repo+branch spawn returns the existing worktree, creates nothing
-        return { ok: true, reused: true, ...pub(existing), command: cmd(existing.worktreePath, existing.prompt), surface: null, warnings: [] };
+        return { ok: true, reused: true, ...pub(existing), command: cmd(existing.worktreePath, existing.agent, existing.prompt), surface: null, warnings: [] };
       }
       mkdirSync(dirname(wtPath), { recursive: true });
       let branchExists = true;
@@ -183,7 +195,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
         id: randomUUID(), repoPath: repo, baseBranch: base, branch,
         worktreePath: real(wtPath), presetId: presetId ?? null, sessionId: null,
         status: 'provisioning', createdAt: Date.now(), endedAt: null, lastCheckedAt: null,
-        swarmId: swarmId ?? null, prompt,
+        swarmId: swarmId ?? null, prompt, agent,
       };
       rows.set(w.id, w);
       save(w);
@@ -195,10 +207,10 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
       let surfaceResult = null;
       if (launch && surface) {
         surfaceResult = await surface
-          .launch({ cwd: w.worktreePath, command: claudeCmd(prompt), title: `${repoSlug}-${slug(branch)}`, pane: paneTarget, via })
+          .launch({ cwd: w.worktreePath, command: agentCmd(agent, prompt), title: `${repoSlug}-${slug(branch)}`, pane: paneTarget, via })
           .catch((err) => ({ ok: false, hint: String(err?.message ?? err) })); // surface contract says no-throw; belt and suspenders
       }
-      return { ok: true, reused: false, ...pub(w), command: cmd(w.worktreePath, prompt), surface: surfaceResult, warnings };
+      return { ok: true, reused: false, ...pub(w), command: cmd(w.worktreePath, agent, prompt), surface: surfaceResult, warnings };
     }
   }
 
@@ -290,7 +302,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
 
   // N parallel attempts at the same task: branches <base>-a … -<n>, same prompt, one swarmId.
   // README §7 시나리오 B: compare in the diff view → adopt one → losers cleaned up.
-  async function swarm({ repoPath, branch, baseBranch, presetId, count, prompt, via, paneTarget, launch = true } = {}) {
+  async function swarm({ repoPath, branch, baseBranch, presetId, count, prompt, via, paneTarget, launch = true, agent = 'claude' } = {}) {
     count = Math.floor(Number(count) || 0);
     if (count < 2 || count > SWARM_MAX) return { ok: false, error: `swarm count must be 2..${SWARM_MAX}` };
     if (typeof prompt !== 'string' || !prompt.trim()) return { ok: false, error: 'swarm needs a prompt — all members must attempt the same task' };
@@ -301,7 +313,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     for (let i = 0; i < count; i++) {
       const r = await create({
         repoPath, branch: `${baseName}-${String.fromCharCode(97 + i)}`, baseBranch,
-        presetId, launch, paneTarget, via, swarmId, prompt, fresh: true,
+        presetId, launch, paneTarget, via, swarmId, prompt, fresh: true, agent,
       });
       members.push(r);
       if (!r.ok) break; // partial swarm reported as-is; user can rm the created ones

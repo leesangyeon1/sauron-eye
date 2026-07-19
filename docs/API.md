@@ -266,6 +266,31 @@ sauron swarm adopt <winner-worktree-id>
 Worktrees 탭 상단에 swarm 카드 — 멤버별 상태/세션/[diff]/[👑 채택].
 diff 모달: +/-/hunk 컬러, stat + untracked + truncated 표시.
 
+## Phase 8 — 멀티 에이전트 (codex/gemini/grok)
+
+### spawn --agent
+`sauron spawn <repo> --agent claude|codex|gemini|grok [--prompt …]` (기본 claude).
+swarm 도 `--agent` 지원 — 멤버 전원 같은 에이전트. 실행 커맨드(문법 전부 각 CLI --help 검증):
+| agent | prompt 있음 | 없음 |
+|---|---|---|
+| claude | `claude '<p>'` | `claude` |
+| codex | `codex '<p>'` | `codex` |
+| gemini | `gemini -i '<p>'` | `gemini` |
+| grok | `grok '<p>'` | `grok` |
+worktree 행에 agent 저장·표시(claude 외엔 배지). API create/swarm body 에 `agent` 필드.
+
+### sauron install --agents (관측 호환)
+각 CLI 의 훅/notify 를 collectors/hook.js 로 배선 — 다른 provider 로 라이브 표시:
+- **gemini**: `~/.gemini/settings.json` hooks 병합 (SessionStart/End/Notification/BeforeTool/
+  AfterTool → 우리 이벤트). Claude 와 동일 머지 방식, 사용자 키 보존.
+- **grok**: `~/.grok/hooks/sauron.json` (Claude 호환 이벤트 8종, stdin JSON).
+- **codex**: `~/.codex/config.toml` 의 `notify` (없을 때만 추가, 기존 것 절대 안 건드림).
+  turn-complete 만 있어 codex 세션은 working↔idle 만 — session end 없음.
+- 각 CLI 설정 디렉토리 없으면 skip. hook.js 는 provider 인자(argv[3]) 로 라벨 구분,
+  세션 payload 필드명 차이(session_id/thread-id/cwd/workingDirectory) 관대 파싱.
+- 한계: spawn 은 4개 다 완전 지원, **라이브 관측은 claude 가 완전**(전 이벤트), grok/gemini
+  는 훅으로 대부분, codex 는 turn-complete 만.
+
 ## Phase 6 — cron 자동화 + map 실행 연결
 
 ### sauron cron (데몬 API 아님 — 사용자 crontab 관리)

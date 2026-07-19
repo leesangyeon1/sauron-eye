@@ -95,8 +95,16 @@ switch (cmd) {
   case 'uninstall': {
     const mod = await import('../collectors/install.js').catch(() => null);
     if (!mod?.install) missing('collectors (collectors/install.js)');
-    if (cmd === 'install') await mod.install({ dryRun: process.argv.includes('--dry-run') });
-    else await mod.uninstall();
+    if (cmd === 'install') {
+      await mod.install({ dryRun: process.argv.includes('--dry-run') });
+      if (process.argv.includes('--agents')) {
+        const am = await import('../collectors/install-agents.js');
+        for (const r of await am.installAgents()) {
+          if (r.installed) console.log(`✓ ${r.agent}: ${r.path}${r.note ? ` (${r.note})` : ''}`);
+          else console.log(`· ${r.agent}: skipped — ${r.reason}`);
+        }
+      }
+    } else await mod.uninstall();
     break;
   }
   case 'spawn': {
@@ -112,6 +120,7 @@ switch (cmd) {
         via: { type: 'string' },
           swarm: { type: 'string' },
           prompt: { type: 'string' },
+          agent: { type: 'string' },
           'no-launch': { type: 'boolean' },
           'ensure-daemon': { type: 'boolean' }, // cron-driven spawns boot the daemon themselves
         },
@@ -129,6 +138,10 @@ switch (cmd) {
       console.error('daemon failed to start within 5s');
       process.exit(1);
     }
+    if (values.agent && !['claude', 'codex', 'gemini', 'grok'].includes(values.agent)) {
+      console.error(`unknown agent "${values.agent}" — supported: claude, codex, gemini, grok`);
+      process.exit(1);
+    }
     const common = {
       repoPath: resolve(positionals[0] ?? '.'),
       branch: values.branch,
@@ -137,6 +150,7 @@ switch (cmd) {
       launch: !values['no-launch'],
       paneTarget: process.env.TMUX_PANE, // present iff spawn ran inside tmux → split in place
       via: values.via, // omitted → daemon auto-detects (cmux > tmux)
+      agent: values.agent, // omitted → claude
     };
     if (values.swarm) {
       const r = await api('POST', '/api/swarm/create', { ...common, count: Number(values.swarm), prompt: values.prompt });
@@ -290,6 +304,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux|cmux] [--swarm N --prompt "task"] [--no-launch]|swarm <ls|adopt <id>>|worktree <ls|gc|rm>|cron <add|ls|rm>|install [--dry-run]|uninstall|status>`);
+    console.log(`usage: sauron <start|app|tui|spawn <repo> [--agent claude|codex|gemini|grok] [--branch B] [--base B] [--preset P] [--via tmux|cmux] [--swarm N --prompt "task"] [--no-launch]|swarm <ls|adopt <id>>|worktree <ls|gc|rm>|cron <add|ls|rm>|install [--agents]|uninstall|status>`);
     process.exit(cmd ? 1 : 0);
 }

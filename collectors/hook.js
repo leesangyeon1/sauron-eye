@@ -3,7 +3,9 @@
 // 50ms budget, failures ignored — never slows Claude down.
 // events: session_start session_end stop notification user_prompt_submit
 //         pre_tool_use post_tool_use subagent_stop
+// argv: <event> [provider]  — provider defaults to claude (other agents pass codex|gemini|grok)
 const event = process.argv[2] || 'unknown';
+const provider = process.argv[3] || 'claude';
 
 let raw = '';
 try { for await (const c of process.stdin) raw += c; } catch {}
@@ -36,7 +38,11 @@ try {
   await fetch(`http://127.0.0.1:${port}/ingest/hook`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId: j.session_id, ts: Date.now(), event, cwd: j.cwd, provider: 'claude', meta }),
+    // gemini/grok/codex payloads vary — try the common id/cwd field names
+    body: JSON.stringify({
+      sessionId: j.session_id ?? j.sessionId ?? j['thread-id'] ?? j.threadId,
+      ts: Date.now(), event, cwd: j.cwd ?? j.workingDirectory ?? j.working_dir, provider, meta,
+    }),
     // ponytail: cold-start fetch can exceed 50ms on some machines; env knob for tests/tuning
     signal: AbortSignal.timeout(Number(process.env.SAURON_HOOK_TIMEOUT_MS) || 50),
   });
