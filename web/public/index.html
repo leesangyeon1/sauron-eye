@@ -121,6 +121,28 @@
   .tldot { width: 8px; height: 8px; border-radius: 50%; background: var(--grey); flex: none; }
   .tldot.run { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
 
+  /* ---- worktrees tab ---- */
+  #view-worktrees { overflow-y: auto; padding: 12px 16px; }
+  .wtform { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--card);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .wtform input { font: inherit; font-size: 13px; color: inherit; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+  #wt-repo { flex: 1; min-width: 220px; }
+  .wtbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .wtgc { font-size: 12px; color: var(--dim); }
+  table.wt { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.wt th { text-align: left; color: var(--dim); font-weight: 400; font-size: 11px;
+    border-bottom: 1px solid var(--border); padding: 4px 8px 4px 0; }
+  table.wt td { padding: 7px 8px 7px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .wbadge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+    padding: 2px 7px; border-radius: 10px; color: #fff; white-space: nowrap; }
+  .wbadge.provisioning { background: var(--blue); }
+  .wbadge.active { background: var(--green); }
+  .wbadge.pending-cleanup { background: var(--amber); }
+  .wbadge.clean { background: var(--grey); }
+  .wbadge.dirty { background: var(--red); }
+  .wpath { font-size: 11px; color: var(--dim); overflow-wrap: anywhere; }
+
   /* ---- map tab ---- */
   #view-map { display: flex; overflow: hidden; }
   #palette { width: 170px; flex: none; border-right: 1px solid var(--border); overflow-y: auto;
@@ -188,6 +210,7 @@
   <div id="dot" title="SSE"></div>
   <nav id="tabs">
     <a href="#sessions" id="tab-a-sessions">Sessions</a>
+    <a href="#worktrees" id="tab-a-worktrees">Worktrees</a>
     <a href="#map" id="tab-a-map">Map</a>
   </nav>
 </header>
@@ -195,6 +218,27 @@
 <main id="view-sessions">
   <div id="empty-s" class="empty" hidden>세션 없음 — Claude Code 세션을 열면 여기 나타납니다. (sauron install 을 실행했는지 확인)</div>
   <div id="groups"></div>
+</main>
+
+<main id="view-worktrees" hidden>
+  <div class="wtform">
+    <input id="wt-repo" placeholder="repo 경로 (예: ~/projects/x)">
+    <input id="wt-branch" placeholder="branch (비우면 자동)" size="18">
+    <input id="wt-base" placeholder="base" size="8">
+    <input id="wt-preset" list="wt-presets" placeholder="preset (선택)" size="14">
+    <datalist id="wt-presets"></datalist>
+    <button class="btn" id="wt-spawn">🌱 Spawn</button>
+  </div>
+  <div class="wtbar">
+    <button class="btn" id="wt-gc">GC 검사 (dry-run)</button>
+    <button class="btn" id="wt-gc-force" hidden>정리 실행 — clean 삭제</button>
+    <span class="wtgc" id="wt-gc-out"></span>
+  </div>
+  <div id="empty-w" class="empty" hidden>worktree 없음 — 위 폼에서 spawn 하거나 <span class="num">sauron spawn &lt;repo&gt;</span></div>
+  <table class="wt" id="wt-table" hidden>
+    <thead><tr><th>STATUS</th><th>BRANCH / PATH</th><th>SESSION</th><th>REPO</th><th>AGE</th><th></th></tr></thead>
+    <tbody id="wt-rows"></tbody>
+  </table>
 </main>
 
 <main id="view-map" hidden>
@@ -445,10 +489,119 @@ function renderPanel() {
 document.addEventListener('click', e => {
   const cp = e.target.closest('[data-copy]');
   if (cp) { navigator.clipboard?.writeText(cp.dataset.copy).then(() => toast('복사됨'), () => {}); return; }
+  const rm = e.target.closest('[data-wrm]');
+  if (rm) { rmWt(rm.dataset.wrm); return; }
   if (e.target.id === 'pclose' || e.target.id === 'shade') return closePanel();
   const c = e.target.closest('.card[data-sid]');
   if (c && $('view-sessions').contains(c)) openPanel(c.dataset.sid);
 });
+
+// ---------- worktrees ----------
+const worktrees = new Map(); // id -> worktree (removed rows dropped)
+let wtInited = false;
+
+function wtUpsert(w) {
+  if (!w?.id) return;
+  if (w.status === 'removed') worktrees.delete(w.id);
+  else worktrees.set(w.id, { ...worktrees.get(w.id), ...w });
+}
+
+async function loadWorktrees() {
+  try {
+    const j = await (await fetch('/api/worktree/list')).json();
+    worktrees.clear();
+    for (const w of j.worktrees ?? []) wtUpsert(w);
+  } catch {}
+  renderWorktrees();
+}
+
+async function loadPresets() {
+  try {
+    const j = await (await fetch('/api/presets')).json();
+    $('wt-presets').innerHTML = (j.presets ?? [])
+      .map(p => `<option value="${esc(p.id)}">${esc((p.emoji ? p.emoji + ' ' : '') + p.name)}</option>`).join('');
+  } catch {}
+}
+
+function renderWorktrees() {
+  if (tab !== 'worktrees') return;
+  const list = [...worktrees.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  $('empty-w').hidden = list.length > 0;
+  $('wt-table').hidden = list.length === 0;
+  $('wt-rows').innerHTML = list.map(w => {
+    const s = w.sessionId ? sessions.get(w.sessionId) : null; // live join beats the list()'s snapshot
+    const sess = s ? `<span class="badge ${esc(s.state)}">${esc(s.state)}</span> ${esc(s.model ?? '')}`
+      : (w.sessionId ? '<span class="dim">ended</span>' : '<span class="dim">—</span>');
+    return `<tr data-wid="${esc(w.id)}">
+      <td><span class="wbadge ${esc(w.status)}">${esc(w.status)}</span></td>
+      <td><div class="num">${esc(w.branch)}</div><div class="wpath">${esc(w.worktreePath)}</div></td>
+      <td>${sess}</td>
+      <td>${esc((w.repoPath || '').split('/').filter(Boolean).pop() || '')}${w.presetId ? ` <span class="chip">🧊 ${esc(w.presetId)}</span>` : ''}</td>
+      <td class="num">${rel(w.createdAt)}</td>
+      <td style="white-space:nowrap"><button class="btn" data-copy="cd '${esc(w.worktreePath)}' && claude" title="실행 커맨드 복사">⧉ cd</button>
+        <button class="btn" data-wrm="${esc(w.id)}" title="worktree 삭제">🗑</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function spawnWt() {
+  const repoPath = $('wt-repo').value.trim();
+  if (!repoPath) return toast('repo 경로를 입력하세요');
+  $('wt-spawn').disabled = true;
+  try {
+    const r = await (await fetch('/api/worktree/create', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        repoPath,
+        branch: $('wt-branch').value.trim() || undefined,
+        baseBranch: $('wt-base').value.trim() || undefined,
+        presetId: $('wt-preset').value.trim() || undefined,
+      }),
+    })).json();
+    if (!r.ok) { toast('spawn 실패: ' + (r.error ?? '?')); return; }
+    const extra = (r.warnings ?? [])[0] ?? (r.surface?.ok ? r.surface.note : r.surface?.hint ? 'surface 실패 — ⧉ cd 로 수동 실행' : '');
+    toast((r.reused ? '기존 worktree 재사용' : 'spawned: ' + r.branch) + (extra ? ' · ' + extra : ''));
+    loadWorktrees();
+  } catch {
+    toast('spawn 실패 — 데몬 연결 안 됨');
+  } finally {
+    $('wt-spawn').disabled = false;
+  }
+}
+
+async function rmWt(id) {
+  const w = worktrees.get(id);
+  if (!w) return;
+  if (!confirm(`worktree 삭제?\n${w.branch}\n${w.worktreePath}`)) return;
+  const del = (force) => fetch('/api/worktree/' + encodeURIComponent(id), {
+    method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force }),
+  }).then(r => r.json());
+  let r = await del(false).catch(() => ({ ok: false, error: '데몬 연결 안 됨' }));
+  if (!r.ok && /dirty/.test(r.error ?? '')) {
+    if (!confirm('미커밋 변경이 있습니다 — 강제 삭제하면 유실됩니다. 계속?')) return;
+    r = await del(true).catch(() => ({ ok: false, error: '데몬 연결 안 됨' }));
+  }
+  toast(r.ok ? '삭제됨 (브랜치는 유지)' : (r.error ?? '삭제 실패'));
+  loadWorktrees();
+}
+
+async function runGc(force) {
+  try {
+    const rep = await (await fetch('/api/worktree/gc', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: !force }),
+    })).json();
+    if (rep.error) return toast(rep.error);
+    const n = k => rep[k]?.length ?? 0;
+    $('wt-gc-out').textContent =
+      `${force ? '삭제 ' + n('removed') : 'clean ' + n('clean') + ' (삭제 가능)'} · dirty ${n('dirty')} (보존) · missing ${n('missing')} · errors ${n('errors')}`;
+    $('wt-gc-force').hidden = force || n('clean') === 0;
+    loadWorktrees();
+  } catch { toast('gc 실패 — 데몬 연결 안 됨'); }
+}
+
+$('wt-spawn').addEventListener('click', spawnWt);
+$('wt-gc').addEventListener('click', () => runGc(false));
+$('wt-gc-force').addEventListener('click', () => { if (confirm('clean worktree 를 실제로 삭제합니다 (dirty 는 안 건드림). 계속?')) runGc(true); });
 
 // ---------- SSE (v1 behavior kept) ----------
 const BACKOFF = [2000, 5000, 10000];
@@ -462,7 +615,10 @@ function connect() {
     setTimeout(connect, BACKOFF[Math.min(attempt++, BACKOFF.length - 1)]);
   };
   es.addEventListener('session', e => {
-    try { upsert(JSON.parse(e.data)); renderSessions(); renderPanel(); } catch {}
+    try { upsert(JSON.parse(e.data)); renderSessions(); renderPanel(); renderWorktrees(); } catch {}
+  });
+  es.addEventListener('worktree', e => {
+    try { wtUpsert(JSON.parse(e.data)); renderWorktrees(); } catch {}
   });
   es.addEventListener('quota', e => { // live usage nudges between 60s group refetches
     try {
@@ -829,12 +985,18 @@ function toast(msg) {
 
 // ---------- routing ----------
 function route() {
-  tab = location.hash === '#map' ? 'map' : 'sessions';
+  tab = location.hash === '#map' ? 'map' : location.hash === '#worktrees' ? 'worktrees' : 'sessions';
   $('view-sessions').hidden = tab !== 'sessions';
+  $('view-worktrees').hidden = tab !== 'worktrees';
   $('view-map').hidden = tab !== 'map';
   $('tab-a-sessions').classList.toggle('on', tab === 'sessions');
+  $('tab-a-worktrees').classList.toggle('on', tab === 'worktrees');
   $('tab-a-map').classList.toggle('on', tab === 'map');
   if (tab === 'map' && !mapInited) { mapInited = true; renderPalette(); loadMap(); loadCatalog(); }
+  if (tab === 'worktrees') {
+    if (!wtInited) { wtInited = true; loadPresets(); }
+    loadWorktrees();
+  }
   if (tab === 'sessions') renderSessions();
 }
 window.addEventListener('hashchange', route);
@@ -844,6 +1006,6 @@ route();
 loadGroups();
 connect();
 setInterval(loadGroups, 60_000);            // detect()/usage refresh
-setInterval(() => { renderSessions(); renderPanel(); }, 5000); // ponytail: 5s tick — chip durations jump 5s, fine
+setInterval(() => { renderSessions(); renderPanel(); renderWorktrees(); }, 5000); // ponytail: 5s tick — chip durations jump 5s, fine
 </script>
 </html>

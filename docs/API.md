@@ -219,3 +219,15 @@ sauron spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux] [--no-laun
 sauron worktree ls | gc [--force] | rm <id|path> [--force]
 ```
 spawn 은 $TMUX_PANE 을 paneTarget 으로 전달 — tmux 안에서 실행하면 제자리 split.
+
+## GET /api/presets (Phase 3)
+AI-Refrigerator `GET :4924/api/presets` 프록시 (브라우저 CORS 우회용).
+`{ "ok": true, "presets": [{ "id", "name", "emoji" }] }` — fridge 다운이면 빈 배열 (soft).
+
+## UI (Phase 3)
+- web `#worktrees` 탭: spawn 폼(repo/branch/base/preset datalist) · GC dry-run→force 2단계 ·
+  행별 ⧉cd(커맨드 복사)/🗑(rm, dirty 면 force 재확인) · SSE worktree 이벤트로 라이브 갱신,
+  세션 상태는 클라이언트 조인(sessions Map).
+- tui: `w` 세션⇄worktree 뷰 토글, `s` spawn(footer 프롬프트: repo→preset, $TMUX_PANE 스플릿),
+  worktree 뷰에서 `g` gc dry / `G` gc force(y/N) / `x` rm(dirty 면 force 재확인).
+- create 의 repoPath 는 `~/` 프리픽스 허용 (서버가 homedir 확장).

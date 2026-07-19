@@ -55,12 +55,13 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
-export async function startServer({ port, dbPath, worktreeRoot } = {}) {
+export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}) {
   port ??= Number(process.env.SAURON_PORT) || 4870;
+  fridgeUrl ??= process.env.SAURON_FRIDGE_URL || 'http://127.0.0.1:4924';
   const store = openStore(dbPath ?? process.env.SAURON_DB);
   const registry = createRegistry(store);
   // surface passed unconditionally: launch() degrades to { ok:false, hint } when tmux is absent
-  const worktrees = createWorktreeManager(store, registry, { root: worktreeRoot, surface: tmuxSurface });
+  const worktrees = createWorktreeManager(store, registry, { root: worktreeRoot, surface: tmuxSurface, fridgeUrl });
   const sseClients = new Set();
   const nameCache = new Map(); // ponytail: caches nulls forever too; restart to pick up late names
 
@@ -165,6 +166,20 @@ export async function startServer({ port, dbPath, worktreeRoot } = {}) {
 
       if (rawPath === '/api/worktree/list') {
         return json(res, 200, { worktrees: worktrees.list() });
+      }
+
+      // browser can't hit AI-Refrigerator cross-origin — proxy the preset list (soft dependency)
+      if (rawPath === '/api/presets') {
+        try {
+          const r = await fetch(`${fridgeUrl}/api/presets`, { signal: AbortSignal.timeout(1500) });
+          const j = await r.json();
+          const presets = (j?.data?.presets ?? [])
+            .filter((p) => p?.id)
+            .map((p) => ({ id: p.id, name: p.name ?? p.id, emoji: p.emoji ?? '' }));
+          return json(res, 200, { ok: true, presets });
+        } catch {
+          return json(res, 200, { ok: true, presets: [] }); // fridge down → empty, UI degrades to free text
+        }
       }
 
       if (rawPath === '/api/groups') {

@@ -119,6 +119,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
 
   async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget } = {}) {
     if (typeof repoPath !== 'string' || !repoPath) return { ok: false, error: 'repoPath required' };
+    repoPath = repoPath.replace(/^~(?=\/|$)/, homedir()); // web/tui inputs arrive unexpanded
     let repo;
     try {
       repo = real(await git(resolve(repoPath), 'rev-parse', '--show-toplevel'));

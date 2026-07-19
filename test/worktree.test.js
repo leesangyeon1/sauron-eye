@@ -407,6 +407,40 @@ test('http worktree endpoints', async (t) => {
   assert.ok(!existsSync(r.worktreePath));
 });
 
+test('GET /api/presets proxies the fridge, degrades to [] when down', async (t) => {
+  const fridge = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, data: { presets: [
+      { id: 'frontend', name: 'Frontend React', emoji: '🎨', items: ['x'] },
+      { name: 'no-id — dropped' },
+    ] } }));
+  });
+  await new Promise((r) => fridge.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => fridge.close(r)));
+
+  const db = join(tmpdir(), `sauron-wt-px-${process.pid}.db`);
+  const root = mkdtempSync(join(tmpdir(), 'sauron-wtroot-'));
+  const srv = await startServer({ port: 0, dbPath: db, worktreeRoot: root, fridgeUrl: `http://127.0.0.1:${fridge.address().port}` });
+  t.after(async () => {
+    await srv.close();
+    rmSync(root, { recursive: true, force: true });
+    for (const s of ['', '-wal', '-shm']) rmSync(db + s, { force: true });
+  });
+  const j = await (await fetch(`http://127.0.0.1:${srv.port}/api/presets`)).json();
+  assert.deepEqual(j.presets, [{ id: 'frontend', name: 'Frontend React', emoji: '🎨' }]);
+
+  const db2 = join(tmpdir(), `sauron-wt-px2-${process.pid}.db`);
+  const root2 = mkdtempSync(join(tmpdir(), 'sauron-wtroot-'));
+  const srv2 = await startServer({ port: 0, dbPath: db2, worktreeRoot: root2, fridgeUrl: 'http://127.0.0.1:1' });
+  t.after(async () => {
+    await srv2.close();
+    rmSync(root2, { recursive: true, force: true });
+    for (const s of ['', '-wal', '-shm']) rmSync(db2 + s, { force: true });
+  });
+  const j2 = await (await fetch(`http://127.0.0.1:${srv2.port}/api/presets`)).json();
+  assert.deepEqual(j2.presets, []);
+});
+
 test('a second session cannot steal the link from a live one', async (t) => {
   const repo = makeRepo(t);
   const { mgr, registry } = makeManager(t);
