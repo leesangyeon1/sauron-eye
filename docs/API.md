@@ -231,3 +231,12 @@ AI-Refrigerator `GET :4924/api/presets` 프록시 (브라우저 CORS 우회용).
 - tui: `w` 세션⇄worktree 뷰 토글, `s` spawn(footer 프롬프트: repo→preset, $TMUX_PANE 스플릿),
   worktree 뷰에서 `g` gc dry / `G` gc force(y/N) / `x` rm(dirty 면 force 재확인).
 - create 의 repoPath 는 `~/` 프리픽스 허용 (서버가 homedir 확장).
+
+## Phase 4 — surfaces/cmux + 알림
+- `surfaces/cmux.js`: `cmux --json new-workspace --cwd <p> --command <c> [--description <t>]`
+  (문법 출처: manaflow-ai/cmux docs/cli-contract.md). detect() 는 binary(`--version`)와
+  app 구동(`ping`) 을 구분. ENOENT/소켓 거부 → 설치/실행 힌트.
+- `surfaces/auto.js`: 라우터 — `--via` 명시가 우선, 미지정 시 cmux(app running) > tmux > 없음.
+  create body/CLI `--via` 는 `tmux|cmux`.
+- `core/notifier.js`: 세션이 needs_input 으로 **전이하는 순간** macOS 알림(osascript).
+  재진입 전까지 중복 발화 없음. darwin 전용, `SAURON_NOTIFY=0` 으로 끔. 표면 무관 동작.

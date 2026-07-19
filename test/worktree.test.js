@@ -335,11 +335,12 @@ test('surface: launch result propagates, failure falls back to command', async (
     launch: async (opts) => { calls.push(opts); return { ok: true, note: 'stub pane' }; },
   };
   const { mgr } = makeManager(t, { surface: stub });
-  const r = await mgr.create({ repoPath: repo, branch: 'feat/surf' });
+  const r = await mgr.create({ repoPath: repo, branch: 'feat/surf', via: 'tmux' });
   assert.equal(r.surface.ok, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].cwd, r.worktreePath);
   assert.equal(calls[0].command, 'claude');
+  assert.equal(calls[0].via, 'tmux'); // --via reaches the surface router
 
   const { mgr: mgr2 } = makeManager(t, { surface: { launch: async () => ({ ok: false, hint: 'no tmux' }) } });
   const r2 = await mgr2.create({ repoPath: repo, branch: 'feat/surf2' });

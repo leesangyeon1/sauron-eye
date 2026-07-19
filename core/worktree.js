@@ -117,7 +117,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
     }
   }
 
-  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget } = {}) {
+  async function create({ repoPath, branch, baseBranch, presetId, launch = true, paneTarget, via } = {}) {
     if (typeof repoPath !== 'string' || !repoPath) return { ok: false, error: 'repoPath required' };
     repoPath = repoPath.replace(/^~(?=\/|$)/, homedir()); // web/tui inputs arrive unexpanded
     let repo;
@@ -181,7 +181,7 @@ export function createWorktreeManager(store, registry, { root = DEFAULT_ROOT, su
       let surfaceResult = null;
       if (launch && surface) {
         surfaceResult = await surface
-          .launch({ cwd: w.worktreePath, command: 'claude', title: `${repoSlug}-${slug(branch)}`, pane: paneTarget })
+          .launch({ cwd: w.worktreePath, command: 'claude', title: `${repoSlug}-${slug(branch)}`, pane: paneTarget, via })
           .catch((err) => ({ ok: false, hint: String(err?.message ?? err) })); // surface contract says no-throw; belt and suspenders
       }
       return { ok: true, reused: false, ...pub(w), command: cmd(w.worktreePath), surface: surfaceResult, warnings };

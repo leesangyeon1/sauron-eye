@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createRegistry } from './registry.js';
 import { createWorktreeManager } from './worktree.js';
+import { createNotifier } from './notifier.js';
 import { MCP_CATALOG } from './mcp-catalog.js';
-import * as tmuxSurface from '../surfaces/tmux.js';
+import * as autoSurface from '../surfaces/auto.js';
 
 const readFileP = promisify(readFile);
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web/public');
@@ -60,8 +61,9 @@ export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}
   fridgeUrl ??= process.env.SAURON_FRIDGE_URL || 'http://127.0.0.1:4924';
   const store = openStore(dbPath ?? process.env.SAURON_DB);
   const registry = createRegistry(store);
-  // surface passed unconditionally: launch() degrades to { ok:false, hint } when tmux is absent
-  const worktrees = createWorktreeManager(store, registry, { root: worktreeRoot, surface: tmuxSurface, fridgeUrl });
+  // auto surface routes cmux > tmux per launch; degrades to { ok:false, hint } when neither exists
+  const worktrees = createWorktreeManager(store, registry, { root: worktreeRoot, surface: autoSurface, fridgeUrl });
+  const stopNotifier = createNotifier(registry); // darwin-only needs_input notifications, SAURON_NOTIFY=0 off
   const sseClients = new Set();
   const nameCache = new Map(); // ponytail: caches nulls forever too; restart to pick up late names
 
@@ -148,6 +150,7 @@ export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}
         const r = await worktrees.create({
           repoPath: payload.repoPath, branch: payload.branch, baseBranch: payload.baseBranch,
           presetId: payload.presetId, launch: payload.launch !== false, paneTarget: payload.paneTarget,
+          via: payload.via,
         });
         return json(res, r.ok ? 200 : 400, r);
       }
@@ -282,6 +285,7 @@ export async function startServer({ port, dbPath, worktreeRoot, fridgeUrl } = {}
     port: server.address().port,
     close() {
       clearInterval(sweeper);
+      stopNotifier();
       for (const res of sseClients) res.destroy();
       registry.flush(); // pending debounced activity saves — before the store closes
       return new Promise((resolve) => server.close(() => { store.close(); resolve(); }));

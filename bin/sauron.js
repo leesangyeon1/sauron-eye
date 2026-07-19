@@ -102,8 +102,8 @@ switch (cmd) {
         'no-launch': { type: 'boolean' },
       },
     });
-    if (values.via && values.via !== 'tmux') {
-      console.error(`unknown surface "${values.via}" — Phase 2 supports: tmux`);
+    if (values.via && !['tmux', 'cmux'].includes(values.via)) {
+      console.error(`unknown surface "${values.via}" — supported: tmux, cmux`);
       process.exit(1);
     }
     const r = await api('POST', '/api/worktree/create', {
@@ -113,6 +113,7 @@ switch (cmd) {
       presetId: values.preset,
       launch: !values['no-launch'],
       paneTarget: process.env.TMUX_PANE, // present iff spawn ran inside tmux → split in place
+      via: values.via, // omitted → daemon auto-detects (cmux > tmux)
     });
     if (!r.ok) {
       console.error(`spawn failed: ${r.error}`);
@@ -184,6 +185,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux] [--no-launch]|worktree <ls|gc|rm>|install [--dry-run]|uninstall|status>`);
+    console.log(`usage: sauron <start|app|tui|spawn <repo> [--branch B] [--base B] [--preset P] [--via tmux|cmux] [--no-launch]|worktree <ls|gc|rm>|install [--dry-run]|uninstall|status>`);
     process.exit(cmd ? 1 : 0);
 }
